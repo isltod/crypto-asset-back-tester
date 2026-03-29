@@ -4,8 +4,94 @@ import ccxt
 import pandas as pd
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                                QHBoxLayout, QLabel, QDateTimeEdit, QPushButton,
-                               QTableWidget, QTableWidgetItem, QMessageBox, QHeaderView, QSplitter, QAbstractItemView)
-from PySide6.QtCore import QDateTime, Qt
+                               QTableWidget, QTableWidgetItem, QMessageBox, QHeaderView, QSplitter, QAbstractItemView, QDialog, QDoubleSpinBox)
+from PySide6.QtCore import QDateTime, Qt, QTimer
+from PySide6.QtGui import QAction
+
+class DownloadDialog(QDialog):
+    def __init__(self, parent=None, start_str=None, end_str=None):
+        super().__init__(parent)
+        self.setWindowTitle("데이터 다운로드 기간 설정")
+        self.resize(350, 150)
+        
+        layout = QVBoxLayout(self)
+        
+        # Start Time
+        start_layout = QHBoxLayout()
+        self.start_label = QLabel("시작 날짜 & 시간:")
+        if start_str:
+            start_default = QDateTime.fromString(start_str, "yyyy-MM-dd HH:mm:ss")
+        else:
+            start_default = QDateTime.fromString("2025-07-22 00:00:00", "yyyy-MM-dd HH:mm:ss")
+        self.start_dt = QDateTimeEdit(start_default)
+        self.start_dt.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+        self.start_dt.setCalendarPopup(True)
+        start_layout.addWidget(self.start_label)
+        start_layout.addWidget(self.start_dt)
+        
+        # End Time
+        end_layout = QHBoxLayout()
+        self.end_label = QLabel("종료 날짜 & 시간:")
+        if end_str:
+            end_default = QDateTime.fromString(end_str, "yyyy-MM-dd HH:mm:ss")
+        else:
+            end_default = QDateTime.fromString("2025-07-23 23:59:00", "yyyy-MM-dd HH:mm:ss")
+        self.end_dt = QDateTimeEdit(end_default)
+        self.end_dt.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+        self.end_dt.setCalendarPopup(True)
+        end_layout.addWidget(self.end_label)
+        end_layout.addWidget(self.end_dt)
+        
+        # Download Button
+        self.download_btn = QPushButton("설정된 기간 다운로드")
+        self.download_btn.clicked.connect(self.accept)
+        
+        layout.addLayout(start_layout)
+        layout.addLayout(end_layout)
+        layout.addWidget(self.download_btn)
+        
+    def get_dates(self):
+        # returns start_ms, end_ms
+        return self.start_dt.dateTime().toMSecsSinceEpoch(), self.end_dt.dateTime().toMSecsSinceEpoch()
+
+class LabelingDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("롱 숏 라벨링 설정")
+        self.resize(300, 150)
+        
+        layout = QVBoxLayout(self)
+        
+        # Target Profit (%)
+        tp_layout = QHBoxLayout()
+        self.tp_label = QLabel("목표 수익률(%):")
+        self.tp_spinbox = QDoubleSpinBox()
+        self.tp_spinbox.setRange(0.01, 100.0)
+        self.tp_spinbox.setSingleStep(0.1)
+        self.tp_spinbox.setValue(1.0) # 기본 목표 수익률 1.0%
+        tp_layout.addWidget(self.tp_label)
+        tp_layout.addWidget(self.tp_spinbox)
+        
+        # Stop Loss (%)
+        sl_layout = QHBoxLayout()
+        self.sl_label = QLabel("관리 손실률(%):")
+        self.sl_spinbox = QDoubleSpinBox()
+        self.sl_spinbox.setRange(0.01, 100.0)
+        self.sl_spinbox.setSingleStep(0.1)
+        self.sl_spinbox.setValue(0.5) # 기본 손실률 0.5%
+        sl_layout.addWidget(self.sl_label)
+        sl_layout.addWidget(self.sl_spinbox)
+        
+        # Action Button
+        self.action_btn = QPushButton("탐색 및 라벨링")
+        self.action_btn.clicked.connect(self.accept)
+        
+        layout.addLayout(tp_layout)
+        layout.addLayout(sl_layout)
+        layout.addWidget(self.action_btn)
+        
+    def get_parameters(self):
+        return self.tp_spinbox.value(), self.sl_spinbox.value()
 
 import matplotlib
 matplotlib.use('QtAgg')
@@ -17,45 +103,65 @@ class BinanceDataFetcher(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Binance Futures BTC OHLCV Downloader")
-        self.resize(1000, 800)
+        # 가로는 기존(1000)의 2배, 세로는 기존(800)의 1.5배
+        self.resize(2000, 1200)
         
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.layout = QVBoxLayout(self.central_widget)
         
-        # Setup Inputs
-        self.setup_inputs()
-        
         # Setup Views (Chart and Table)
         self.setup_views()
         
-    def setup_inputs(self):
-        input_layout = QHBoxLayout()
+        # Setup Menu Bar
+        self.setup_menu()
         
-        # Start Time
-        self.start_label = QLabel("시작 날짜 & 시간:")
-        self.start_dt = QDateTimeEdit(QDateTime.currentDateTime().addDays(-1))
-        self.start_dt.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
-        self.start_dt.setCalendarPopup(True)
+        # 앱 실행 직후 UI 렌더링이 완료되면 자동으로 다운로드 실행
+        QTimer.singleShot(100, self.download_data)
+
+    def setup_menu(self):
+        menubar = self.menuBar()
         
-        # End Time
-        self.end_label = QLabel("종료 날짜 & 시간:")
-        self.end_dt = QDateTimeEdit(QDateTime.currentDateTime())
-        self.end_dt.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
-        self.end_dt.setCalendarPopup(True)
+        # '데이터' 메뉴 탭 생성
+        data_menu = menubar.addMenu("데이터(&D)")
         
-        # Download Button
-        self.download_btn = QPushButton("다운로드")
-        self.download_btn.clicked.connect(self.download_data)
+        # '데이터 다운로드...' 액션 추가
+        download_action = QAction("데이터 다운로드...", self)
+        download_action.setShortcut("Ctrl+D")
+        download_action.triggered.connect(self.open_download_dialog)
+        data_menu.addAction(download_action)
         
-        input_layout.addWidget(self.start_label)
-        input_layout.addWidget(self.start_dt)
-        input_layout.addWidget(self.end_label)
-        input_layout.addWidget(self.end_dt)
-        input_layout.addWidget(self.download_btn)
+        data_menu.addSeparator()
         
-        self.layout.addLayout(input_layout)
+        # '롱 숏 라벨링...' 액션 추가
+        labeling_action = QAction("롱 숏 라벨링...", self)
+        labeling_action.setShortcut("Ctrl+L")
+        labeling_action.triggered.connect(self.open_labeling_dialog)
+        data_menu.addAction(labeling_action)
+
+    def open_labeling_dialog(self):
+        dialog = LabelingDialog(self)
+        if dialog.exec():
+            target_profit, stop_loss = dialog.get_parameters()
+            print(f"라벨링 모달 완료 - 목표 수익률: {target_profit}%, 관리 손실률: {stop_loss}%")
+            # 추후 실제 계산 및 UI(ls_label) 갱신 로직 추가 예정
+
+    def open_download_dialog(self):
+        start_str = None
+        end_str = None
         
+        # 현재 화면(차트 및 표)에 표시 중인 데이터가 있다면 그 시작과 끝 시간을 가져옵니다.
+        if hasattr(self, 'current_df') and not self.current_df.empty:
+            start_str = self.current_df['timestamp'].iloc[0].strftime('%Y-%m-%d %H:%M:%S')
+            end_str = self.current_df['timestamp'].iloc[-1].strftime('%Y-%m-%d %H:%M:%S')
+            
+        # 메뉴에서 데이터 다운로드를 클릭했을 때 뜨는 작은 창(Dialog)에 현재 시간을 전달
+        dialog = DownloadDialog(self, start_str=start_str, end_str=end_str)
+        if dialog.exec():
+            # 다이얼로그에서 설정한 시간을 바탕으로 다운로드 함수 호출
+            start_ms, end_ms = dialog.get_dates()
+            self.download_data(start_ms, end_ms)
+            
     def setup_views(self):
         # Create Vertical Splitter
         self.splitter = QSplitter(Qt.Vertical)
@@ -84,8 +190,8 @@ class BinanceDataFetcher(QMainWindow):
         
         # Bottom: Table
         self.table = QTableWidget()
-        self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels(["시간 (Timestamp)", "시가 (Open)", "고가 (High)", "저가 (Low)", "종가 (Close)", "거래량 (Volume)"])
+        self.table.setColumnCount(7)
+        self.table.setHorizontalHeaderLabels(["시간 (Timestamp)", "시가 (Open)", "고가 (High)", "저가 (Low)", "종가 (Close)", "거래량 (Volume)", "LS Label"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.splitter.addWidget(self.table)
         
@@ -95,17 +201,18 @@ class BinanceDataFetcher(QMainWindow):
         # Set Default Splitter Ratio (e.g., 60% chart, 40% table)
         self.splitter.setSizes([500, 300])
         
-    def download_data(self):
-        start_ms = self.start_dt.dateTime().toMSecsSinceEpoch()
-        end_ms = self.end_dt.dateTime().toMSecsSinceEpoch()
-        
+    def download_data(self, start_ms=None, end_ms=None):
+        if start_ms is None or end_ms is None:
+            # 기본 설정값 (프로그램 최초 실행 시 자동 다운로드용)
+            start_ms = QDateTime.fromString("2025-07-22 00:00:00", "yyyy-MM-dd HH:mm:ss").toMSecsSinceEpoch()
+            end_ms = QDateTime.fromString("2025-07-23 23:59:00", "yyyy-MM-dd HH:mm:ss").toMSecsSinceEpoch()
+            
         if start_ms >= end_ms:
             QMessageBox.warning(self, "잘못된 입력", "시작 시간은 종료 시간보다 빨라야 합니다.")
             return
             
-        self.download_btn.setEnabled(False)
-        self.download_btn.setText("데이터 확인 및 다운로드 중...")
-        QApplication.processEvents() # Force UI update
+        # UI 업데이트 강제 (모달 창 처리)
+        QApplication.processEvents() 
         
         try:
             exchange = ccxt.binance({'options': {'defaultType': 'future'}})
@@ -117,8 +224,10 @@ class BinanceDataFetcher(QMainWindow):
             import os
             if os.path.exists(cache_file):
                 df_cache = pd.read_csv(cache_file)
+                if 'ls_label' not in df_cache.columns:
+                    df_cache['ls_label'] = 0
             else:
-                df_cache = pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                df_cache = pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'ls_label'])
                 
             # 다운로드해야 할 구간 (Intervals) 선별: 빠진 구간(Hole) 찾기 알고리즘
             fetch_intervals = []
@@ -171,6 +280,7 @@ class BinanceDataFetcher(QMainWindow):
             # 새로 받은 데이터가 있으면 캐시에 병합
             if new_ohlcv:
                 df_new = pd.DataFrame(new_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                df_new['ls_label'] = 0
                 df_cache = pd.concat([df_cache, df_new], ignore_index=True)
                 
             if not df_cache.empty:
@@ -194,10 +304,6 @@ class BinanceDataFetcher(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "오류", f"예기치 않은 오류가 발생했습니다: {str(e)}")
             
-        finally:
-            self.download_btn.setEnabled(True)
-            self.download_btn.setText("다운로드")
-            
     def populate_ui(self, df):
         # 1. Populate Table
         # 필터링된 데이터프레임의 기존 인덱스를 0부터 시작하도록 리셋해야 QTableWidget 행 번호와 일치합니다.
@@ -213,6 +319,11 @@ class BinanceDataFetcher(QMainWindow):
                 item = QTableWidgetItem(f"{row[col_name]:.2f}")
                 item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
                 self.table.setItem(row_idx, col_idx + 1, item)
+                
+            # LS Label 열 추가 표기 (정수값 0)
+            ls_item = QTableWidgetItem(str(int(row.get('ls_label', 0))))
+            ls_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+            self.table.setItem(row_idx, 6, ls_item)
                 
         # 2. Draw Candlestick Chart
         self.fig.clear()
@@ -258,6 +369,9 @@ class BinanceDataFetcher(QMainWindow):
                     
         ax.xaxis.set_major_locator(mdates.AutoDateLocator())
         ax.xaxis.set_major_formatter(CustomDateFormatter())
+        
+        # 차트 우측상단(또는 하단)에 표시되는 마우스 커서 위치의 X축 좌표 포맷을 명시적으로 지정
+        ax.format_xdata = mdates.DateFormatter('%Y-%m-%d %H:%M')
         
         self.fig.tight_layout()
         self.canvas.draw()
