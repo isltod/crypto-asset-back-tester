@@ -4,7 +4,7 @@ import ccxt
 import pandas as pd
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                                QHBoxLayout, QLabel, QDateTimeEdit, QPushButton,
-                               QTableWidget, QTableWidgetItem, QMessageBox, QHeaderView, QSplitter, QAbstractItemView, QDialog, QDoubleSpinBox)
+                               QTableWidget, QTableWidgetItem, QMessageBox, QHeaderView, QSplitter, QAbstractItemView, QDialog, QDoubleSpinBox, QStatusBar, QProgressBar)
 from PySide6.QtCore import QDateTime, Qt, QTimer
 from PySide6.QtGui import QAction
 
@@ -113,6 +113,9 @@ class BinanceDataFetcher(QMainWindow):
         # Setup Views (Chart and Table)
         self.setup_views()
         
+        # Setup Status Bar
+        self.setup_statusbar()
+        
         # Setup Menu Bar
         self.setup_menu()
         
@@ -138,13 +141,141 @@ class BinanceDataFetcher(QMainWindow):
         labeling_action.setShortcut("Ctrl+L")
         labeling_action.triggered.connect(self.open_labeling_dialog)
         data_menu.addAction(labeling_action)
+        
+        # '라벨 차트 표시' 액션 (토글형) 추가
+        self.show_label_action = QAction("라벨 차트 표시", self)
+        self.show_label_action.setCheckable(True)
+        self.show_label_action.setChecked(False) # 기본값: 꺼짐
+        self.show_label_action.triggered.connect(self.toggle_label_chart)
+        data_menu.addAction(self.show_label_action)
+
+    def toggle_label_chart(self, checked):
+        # 체크 여부가 변경될 때마다 화면(차트 및 표)을 다시 그려서 토글 상태 반영
+        if hasattr(self, 'current_df') and not self.current_df.empty:
+            self.populate_ui(self.current_df)
+
+    def setup_statusbar(self):
+        self.statusBar = QStatusBar()
+        self.setStatusBar(self.statusBar)
+        
+        # 라벨링 진행률을 표시할 프로그레스 바 
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMaximumWidth(200)
+        self.progress_bar.setVisible(False)
+        self.statusBar.addPermanentWidget(self.progress_bar)
 
     def open_labeling_dialog(self):
         dialog = LabelingDialog(self)
         if dialog.exec():
             target_profit, stop_loss = dialog.get_parameters()
-            print(f"라벨링 모달 완료 - 목표 수익률: {target_profit}%, 관리 손실률: {stop_loss}%")
-            # 추후 실제 계산 및 UI(ls_label) 갱신 로직 추가 예정
+            self.apply_labeling(target_profit, stop_loss)
+
+    def apply_labeling(self, target_profit_pct, stop_loss_pct):
+        cache_file = 'btc_usdt_1m_cache.csv'
+        import os
+        import numpy as np
+        
+        if not os.path.exists(cache_file):
+            QMessageBox.warning(self, "오류", "캐시 파일이 존재하지 않습니다. 데이터를 먼저 갱신하세요.")
+            return
+            
+        # 연산 집중 시 UI 멈춤을 방지하기 위한 안내
+        self.setWindowTitle("Binance Futures BTC OHLCV Downloader - 라벨링 연산 중...")
+        QApplication.processEvents()
+        
+        try:
+            df = pd.read_csv(cache_file)
+            if 'ls_label' not in df.columns:
+                df['ls_label'] = 0
+                
+            labels = np.zeros(len(df), dtype=int)
+            opens = df['open'].values
+            highs = df['high'].values
+            lows = df['low'].values
+            
+            tp = target_profit_pct / 100.0
+            sl = stop_loss_pct / 100.0
+            
+            total_rows = len(df)
+            self.progress_bar.setRange(0, total_rows)
+            self.progress_bar.setValue(0)
+            self.progress_bar.setVisible(True)
+            self.statusBar.showMessage("라벨링 분석 연산 중...")
+            
+            # 미래 데이터를 훑어보며 조건 시뮬레이션
+            for i in range(total_rows):
+                if i % 250 == 0:
+                    self.progress_bar.setValue(i)
+                    QApplication.processEvents()
+                    
+                entry_price = opens[i]
+                long_target = entry_price * (1 + tp)
+                long_stop = entry_price * (1 - sl)
+                short_target = entry_price * (1 - tp)
+                short_stop = entry_price * (1 + sl)
+                
+                long_hit_idx = -1
+                short_hit_idx = -1
+                
+                for j in range(i + 1, len(df)):
+                    curr_high = highs[j]
+                    curr_low = lows[j]
+                    
+                    if long_hit_idx == -1:
+                        if curr_low <= long_stop:
+                            long_hit_idx = -2 # 먼저 손절에 도달
+                        elif curr_high >= long_target:
+                            long_hit_idx = j # 정상 익절
+                            
+                    if short_hit_idx == -1:
+                        if curr_high >= short_stop:
+                            short_hit_idx = -2
+                        elif curr_low <= short_target:
+                            short_hit_idx = j
+                            
+                    if long_hit_idx != -1 and short_hit_idx != -1:
+                        break
+                        
+                is_long_success = (long_hit_idx >= 0)
+                is_short_success = (short_hit_idx >= 0)
+                
+                if is_long_success and not is_short_success:
+                    labels[i] = 1
+                elif is_short_success and not is_long_success:
+                    labels[i] = -1
+                elif is_long_success and is_short_success:
+                    # 둘 다 목표 도달 시, '먼저' 달성한 진입포지션을 선택
+                    if long_hit_idx < short_hit_idx:
+                        labels[i] = 1
+                    elif short_hit_idx < long_hit_idx:
+                        labels[i] = -1
+                    else:
+                        labels[i] = 0
+                else:
+                    labels[i] = 0
+
+            self.progress_bar.setValue(total_rows)
+            QApplication.processEvents()
+
+            df['ls_label'] = labels
+            df.to_csv(cache_file, index=False)
+            
+            self.progress_bar.setVisible(False)
+            self.statusBar.showMessage("라벨링 완료!", 3000)
+            
+            QMessageBox.information(self, "라벨링 완료", "설정한 비율에 따라 라벨링 작업이 완료되었습니다.")
+            
+            # 기존 화면에 표시 중이던 기간이 있다면 그 구간을 다시 새로고침하여 표 갱신
+            if hasattr(self, 'last_start_ms') and hasattr(self, 'last_end_ms'):
+                self.download_data(self.last_start_ms, self.last_end_ms)
+                
+        except Exception as e:
+            QMessageBox.critical(self, "오류", f"라벨링 중 예기치 않은 오류 발생: {str(e)}")
+            
+        finally:
+            self.setWindowTitle("Binance Futures BTC OHLCV Downloader")
+            self.progress_bar.setVisible(False)
+            self.statusBar.clearMessage()
 
     def open_download_dialog(self):
         start_str = None
@@ -210,6 +341,10 @@ class BinanceDataFetcher(QMainWindow):
         if start_ms >= end_ms:
             QMessageBox.warning(self, "잘못된 입력", "시작 시간은 종료 시간보다 빨라야 합니다.")
             return
+            
+        # UI를 새로고침(또는 라벨링 후 갱신)할 때 기존 구간을 재사용하기 위해 저장
+        self.last_start_ms = start_ms
+        self.last_end_ms = end_ms
             
         # UI 업데이트 강제 (모달 창 처리)
         QApplication.processEvents() 
@@ -341,9 +476,27 @@ class BinanceDataFetcher(QMainWindow):
         style = mpf.make_mpf_style(marketcolors=mc)
         
         import matplotlib.dates as mdates
+        import numpy as np
         
+        addplots = []
+        if hasattr(self, 'show_label_action') and self.show_label_action.isChecked() and 'ls_label' in plot_df.columns:
+            offset = plot_df['close'] * 0.0005
+            
+            long_arr = np.where(plot_df['ls_label'] == 1, plot_df['high'] + offset, np.nan)
+            short_arr = np.where(plot_df['ls_label'] == -1, plot_df['low'] - offset, np.nan)
+            
+            if not np.isnan(long_arr).all():
+                # 봉 위에 위쪽 화살표 상승기호(빨간색)
+                addplots.append(mpf.make_addplot(long_arr, type='scatter', markersize=0.6, marker='^', color='red', ax=ax))
+            if not np.isnan(short_arr).all():
+                # 봉 아래쪽에 아래쪽 화살표 하락기호(파란색)
+                addplots.append(mpf.make_addplot(short_arr, type='scatter', markersize=0.6, marker='v', color='blue', ax=ax))
+                
         # show_nontrading=True 설정으로 X축을 실제 datetime으로 사용하여 matplotlib 포매터 적용
-        mpf.plot(plot_df, type='candle', ax=ax, style=style, xrotation=0, show_nontrading=True, axtitle="BTC/USDT 1m (Binance Futures)", ylabel="Price (USDT)")
+        if addplots:
+            mpf.plot(plot_df, type='candle', ax=ax, style=style, xrotation=0, show_nontrading=True, axtitle="BTC/USDT 1m (Binance Futures)", ylabel="Price (USDT)", addplot=addplots)
+        else:
+            mpf.plot(plot_df, type='candle', ax=ax, style=style, xrotation=0, show_nontrading=True, axtitle="BTC/USDT 1m (Binance Futures)", ylabel="Price (USDT)")
         
         # 사용자 맞춤형 X축 날짜/시간 포매터 정의
         import matplotlib.ticker as ticker
@@ -372,6 +525,8 @@ class BinanceDataFetcher(QMainWindow):
         
         # 차트 우측상단(또는 하단)에 표시되는 마우스 커서 위치의 X축 좌표 포맷을 명시적으로 지정
         ax.format_xdata = mdates.DateFormatter('%Y-%m-%d %H:%M')
+        
+        self.update_marker_sizes(ax)
         
         self.fig.tight_layout()
         self.canvas.draw()
@@ -409,6 +564,7 @@ class BinanceDataFetcher(QMainWindow):
             new_right = xdata + (xlim[1] - xdata) * scale
             ax.set_xlim([new_left, new_right])
             
+        self.update_marker_sizes(ax)
         self.canvas.draw()
         
     def on_press(self, event):
@@ -449,11 +605,25 @@ class BinanceDataFetcher(QMainWindow):
             # 마우스를 끈 방향으로 차트 이동 (반대 단위로 리미트 이동)
             ax.set_xlim([x0 - dx_data, x1 - dx_data])
             ax.set_ylim([y0 - dy_data, y1 - dy_data])
+            self.update_marker_sizes(ax)
             self.canvas.draw_idle()
 
     def on_release(self, event):
         if event.button == 1:
             self._dragging = False
+
+    def update_marker_sizes(self, ax):
+        xlim = ax.get_xlim()
+        # 현재 화면에 보이는 캔들 개수(x축 범위)
+        visible_candles = max(1, xlim[1] - xlim[0])
+        # 화살표가 지금도 너무 커서 다시 10분의 1 수준(기초 대비 1/100)으로 대폭 하향
+        new_size = max(0.1, min(20, 50 / visible_candles))
+        
+        import matplotlib.collections as mcoll
+        for collection in ax.collections:
+            # mpf.make_addplot으로 추가된 scatter 객체(화살표 마커)의 크기 조절
+            if isinstance(collection, mcoll.PathCollection):
+                collection.set_sizes([new_size])
 
     def handle_double_click(self, event):
         if not hasattr(self, 'current_df') or self.current_df.empty:
