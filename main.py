@@ -644,6 +644,8 @@ class BinanceDataFetcher(QMainWindow):
             item = self.table.item(closest_idx, 0)
             if item:
                 self.table.scrollToItem(item, QAbstractItemView.PositionAtCenter)
+                # 차트를 더블클릭했을 때도 표를 더블클릭한 것과 똑같이 움직이도록 강제 호출해 세로선을 옮겨줌
+                self.on_table_double_click(item)
         except Exception as e:
             print("Error navigating to row:", e)
 
