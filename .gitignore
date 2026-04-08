@@ -3,6 +3,9 @@
 ptb.*.*
 *.csv
 
+# Windows <-> Linux Problem
+*:Zone.Identifier
+
 # supabase
 .env*
 
