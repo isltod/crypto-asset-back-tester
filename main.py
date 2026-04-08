@@ -4,7 +4,7 @@ import ccxt
 import pandas as pd
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                                QHBoxLayout, QLabel, QDateTimeEdit, QPushButton,
-                               QTableWidget, QTableWidgetItem, QMessageBox, QHeaderView, QSplitter, QAbstractItemView, QDialog, QDoubleSpinBox, QStatusBar, QProgressBar)
+                               QTableWidget, QTableWidgetItem, QMessageBox, QHeaderView, QSplitter, QAbstractItemView, QDialog, QDoubleSpinBox, QSpinBox, QStatusBar, QProgressBar, QCheckBox, QComboBox)
 from PySide6.QtCore import QDateTime, Qt, QTimer
 from PySide6.QtGui import QAction
 
@@ -93,6 +93,64 @@ class LabelingDialog(QDialog):
     def get_parameters(self):
         return self.tp_spinbox.value(), self.sl_spinbox.value()
 
+class SMADialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("단순 이동 평균 및 라벨링 추가")
+        self.resize(320, 200)
+        
+        layout = QVBoxLayout(self)
+        
+        period_layout = QHBoxLayout()
+        self.period_label = QLabel("기간 (1~200):")
+        self.period_spinbox = QSpinBox()
+        self.period_spinbox.setRange(1, 200)
+        self.period_spinbox.setValue(20) # 기본 20일/분
+        period_layout.addWidget(self.period_label)
+        period_layout.addWidget(self.period_spinbox)
+        layout.addLayout(period_layout)
+        
+        self.ls_checkbox = QCheckBox("LS 라벨링 적용")
+        layout.addWidget(self.ls_checkbox)
+        
+        self.ls_widget = QWidget()
+        ls_layout = QVBoxLayout(self.ls_widget)
+        ls_layout.setContentsMargins(0, 0, 0, 0)
+        
+        strategy_layout = QHBoxLayout()
+        self.strategy_label = QLabel("전략 선택:")
+        self.strategy_combo = QComboBox()
+        self.strategy_combo.addItem("단순 돌파 전략")
+        strategy_layout.addWidget(self.strategy_label)
+        strategy_layout.addWidget(self.strategy_combo)
+        
+        offset_layout = QHBoxLayout()
+        self.offset_label = QLabel("오프셋 (%):")
+        self.offset_spinbox = QDoubleSpinBox()
+        self.offset_spinbox.setRange(-100.0, 100.0)
+        self.offset_spinbox.setSingleStep(0.1)
+        self.offset_spinbox.setValue(0.0)
+        offset_layout.addWidget(self.offset_label)
+        offset_layout.addWidget(self.offset_spinbox)
+        
+        ls_layout.addLayout(strategy_layout)
+        ls_layout.addLayout(offset_layout)
+        
+        self.ls_widget.setEnabled(False)
+        self.ls_checkbox.toggled.connect(self.ls_widget.setEnabled)
+        
+        layout.addWidget(self.ls_widget)
+        
+        self.action_btn = QPushButton("차트에 추가")
+        self.action_btn.clicked.connect(self.accept)
+        layout.addWidget(self.action_btn)
+        
+    def get_settings(self):
+        return (self.period_spinbox.value(), 
+                self.ls_checkbox.isChecked(), 
+                self.strategy_combo.currentText(), 
+                self.offset_spinbox.value())
+
 import matplotlib
 matplotlib.use('QtAgg')
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas, NavigationToolbar2QT as NavigationToolbar
@@ -109,6 +167,9 @@ class BinanceDataFetcher(QMainWindow):
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.layout = QVBoxLayout(self.central_widget)
+        
+        # State for Indicators
+        self.sma_periods = []
         
         # Setup Views (Chart and Table)
         self.setup_views()
@@ -149,10 +210,104 @@ class BinanceDataFetcher(QMainWindow):
         self.show_label_action.triggered.connect(self.toggle_label_chart)
         data_menu.addAction(self.show_label_action)
 
+        # '지표 설정' 메뉴 탭 생성
+        indicator_menu = menubar.addMenu("지표 설정(&I)")
+        
+        sma_action = QAction("단순 이동 평균...", self)
+        sma_action.triggered.connect(self.open_sma_dialog)
+        indicator_menu.addAction(sma_action)
+        
+        indicator_menu.addSeparator()
+        
+        clear_indicator_action = QAction("지표 초기화", self)
+        clear_indicator_action.triggered.connect(self.clear_indicators)
+        indicator_menu.addAction(clear_indicator_action)
+
     def toggle_label_chart(self, checked):
         # 체크 여부가 변경될 때마다 화면(차트 및 표)을 다시 그려서 토글 상태 반영
         if hasattr(self, 'current_df') and not self.current_df.empty:
             self.populate_ui(self.current_df)
+
+    def apply_sma_breakout_labeling(self, period, strategy, offset_pct):
+        cache_file = 'btc_usdt_1m_cache.csv'
+        import os
+        import numpy as np
+        
+        if not os.path.exists(cache_file):
+            QMessageBox.warning(self, "오류", "캐시 파일이 존재하지 않습니다. 데이터를 먼저 갱신하세요.")
+            return
+            
+        self.setWindowTitle("Binance Futures BTC - 단순 돌파 연산 중...")
+        QApplication.processEvents()
+        
+        try:
+            df = pd.read_csv(cache_file)
+            
+            # SMA 계산 및 오프셋 적용 기준선 생성 (충분한 데이터 없으면 NaN)
+            sma = df['close'].rolling(window=period).mean()
+            upper_bound = sma * (1 + offset_pct / 100.0)
+            lower_bound = sma * (1 - offset_pct / 100.0)
+            
+            opens = df['open'].values
+            
+            # 이전 오픈가와 이전 SMA선 접근을 위한 shift 연산
+            prev_opens = np.roll(opens, 1)
+            prev_opens[0] = opens[0]
+            
+            prev_upper = np.roll(upper_bound.values, 1)
+            prev_lower = np.roll(lower_bound.values, 1)
+            
+            # 상향 돌파 및 하향 돌파 시그널 식별 (기준을 오프셋 밴드로 원복)
+            cross_up = (prev_opens <= prev_upper) & (opens > upper_bound.values)
+            cross_down = (prev_opens >= prev_lower) & (opens < lower_bound.values)
+            
+            # 상태 머신 로직: 이전의 state(label)를 유지하기 위해 Pandas ffill 활용
+            signal_series = pd.Series(0, index=df.index)
+            signal_series.loc[cross_up] = 1
+            signal_series.loc[cross_down] = -1
+            
+            # 시그널이 없는 구간(0)을 NaN으로 만들어 ffill() 대상이 되게 함
+            signal_series = signal_series.replace(0, np.nan)
+            
+            # 가장 첫 번째 값은 0으로 시작하도록 강제 지정
+            if pd.isna(signal_series.iloc[0]):
+                signal_series.iloc[0] = 0
+                
+            # NaN을 이전 상태값으로 덮어씌움 (ffill)
+            df['ls_label'] = signal_series.ffill().fillna(0).astype(int).values
+            df.to_csv(cache_file, index=False)
+            
+            QMessageBox.information(self, "라벨링 완료", f"이동평균({period}) 단순 돌파 전략(오프셋 {offset_pct}%) 데이터 갱신 완료!")
+            
+            if hasattr(self, 'last_start_ms') and hasattr(self, 'last_end_ms'):
+                # 캐시 파일을 데이터프레임으로 갱신 후 화면 리렌더링
+                self.download_data(self.last_start_ms, self.last_end_ms)
+                
+        except Exception as e:
+            QMessageBox.critical(self, "오류", f"라벨링 중 오류 발생: {str(e)}")
+        finally:
+            self.setWindowTitle("Binance Futures BTC OHLCV Downloader")
+
+    def open_sma_dialog(self):
+        dialog = SMADialog(self)
+        if dialog.exec():
+            period, use_ls, strategy, offset = dialog.get_settings()
+            
+            if period not in self.sma_periods:
+                self.sma_periods.append(period)
+                
+            if use_ls and strategy == "단순 돌파 전략":
+                self.apply_sma_breakout_labeling(period, strategy, offset)
+            else:
+                if hasattr(self, 'current_df') and not self.current_df.empty:
+                    self.populate_ui(self.current_df)
+
+    def clear_indicators(self):
+        if self.sma_periods:
+            self.sma_periods.clear()
+            if hasattr(self, 'current_df') and not self.current_df.empty:
+                self.populate_ui(self.current_df)
+            QMessageBox.information(self, "지표 초기화", "추가된 모든 지표가 차트에서 제거되었습니다.")
 
     def setup_statusbar(self):
         self.statusBar = QStatusBar()
@@ -446,7 +601,7 @@ class BinanceDataFetcher(QMainWindow):
         self.current_df = df  # 더블클릭 이벤트를 위해 데이터 보관
         self.table.setRowCount(len(df))
         for row_idx, row in df.iterrows():
-            ts_item = QTableWidgetItem(row['timestamp'].strftime('%Y-%m-%d %H:%M:%S'))
+            ts_item = QTableWidgetItem(row['timestamp'].strftime('%Y-%m-%d %H:%M'))
             ts_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
             self.table.setItem(row_idx, 0, ts_item)
             
@@ -479,6 +634,15 @@ class BinanceDataFetcher(QMainWindow):
         import numpy as np
         
         addplots = []
+        
+        # SMA 렌더링
+        sma_colors = ['orange', 'purple', 'green', 'magenta', 'cyan', 'brown']
+        if hasattr(self, 'sma_periods') and self.sma_periods:
+            for idx, period in enumerate(self.sma_periods):
+                col_name = f'SMA_{period}'
+                plot_df[col_name] = plot_df['close'].rolling(window=period).mean()
+                color = sma_colors[idx % len(sma_colors)]
+                addplots.append(mpf.make_addplot(plot_df[col_name], type='line', color=color, width=1.0, ax=ax))
         if hasattr(self, 'show_label_action') and self.show_label_action.isChecked() and 'ls_label' in plot_df.columns:
             offset = plot_df['close'] * 0.0005
             
@@ -682,14 +846,14 @@ class BinanceDataFetcher(QMainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
-    # 전체 폰트 크기 1.5배로 키우기
+    # 전체 폰트 크기를 기존 설정의 절반 수준으로 줄이기
     font = app.font()
     if font.pointSize() > 0:
-        font.setPointSizeF(font.pointSizeF() * 1.5)
+        font.setPointSizeF(font.pointSizeF() * 1.2)
     elif font.pixelSize() > 0:
-        font.setPixelSize(int(font.pixelSize() * 1.5))
+        font.setPixelSize(int(font.pixelSize() * 1.2))
     else:
-        font.setPointSize(15)
+        font.setPointSize(8)
     app.setFont(font)
     
     window = BinanceDataFetcher()
