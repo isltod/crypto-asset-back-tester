@@ -2,6 +2,7 @@ import sys
 import datetime
 import ccxt
 import pandas as pd
+import numpy as np
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                                QHBoxLayout, QLabel, QDateTimeEdit, QPushButton,
                                QTableWidget, QTableWidgetItem, QMessageBox, QHeaderView, QSplitter, QAbstractItemView, QDialog, QDoubleSpinBox, QSpinBox, QStatusBar, QProgressBar, QCheckBox, QComboBox)
@@ -210,6 +211,12 @@ class BinanceDataFetcher(QMainWindow):
         self.show_label_action.triggered.connect(self.toggle_label_chart)
         data_menu.addAction(self.show_label_action)
 
+        # '백테스트 실행...' 액션 추가 (기능은 추후 구현)
+        backtest_action = QAction("백테스트 실행...", self)
+        backtest_action.setShortcut("Ctrl+B")
+        backtest_action.triggered.connect(self.run_backtest)
+        data_menu.addAction(backtest_action)
+
         # '지표 설정' 메뉴 탭 생성
         indicator_menu = menubar.addMenu("지표 설정(&I)")
         
@@ -231,7 +238,6 @@ class BinanceDataFetcher(QMainWindow):
     def apply_sma_breakout_labeling(self, period, strategy, offset_pct):
         cache_file = 'btc_usdt_1m_cache.csv'
         import os
-        import numpy as np
         
         if not os.path.exists(cache_file):
             QMessageBox.warning(self, "오류", "캐시 파일이 존재하지 않습니다. 데이터를 먼저 갱신하세요.")
@@ -328,7 +334,6 @@ class BinanceDataFetcher(QMainWindow):
     def apply_labeling(self, target_profit_pct, stop_loss_pct):
         cache_file = 'btc_usdt_1m_cache.csv'
         import os
-        import numpy as np
         
         if not os.path.exists(cache_file):
             QMessageBox.warning(self, "오류", "캐시 파일이 존재하지 않습니다. 데이터를 먼저 갱신하세요.")
@@ -432,6 +437,101 @@ class BinanceDataFetcher(QMainWindow):
             self.progress_bar.setVisible(False)
             self.statusBar.clearMessage()
 
+    def run_backtest(self):
+        if not hasattr(self, 'current_df') or self.current_df.empty:
+            QMessageBox.warning(self, "백테스트", "백테스트를 수행할 데이터가 없습니다.")
+            return
+            
+        import os
+        try:
+            # 1. 초기값 설정 및 준비
+            df = self.current_df.copy()
+            fee_rate = 0.0005 # 0.05%
+            balance = 100.0
+            pos = 0 # 0: None, 1: Long, -1: Short
+            entry_price = 0.0
+            
+            total_rows = len(df)
+            
+            # 2. 거래 시뮬레이션
+            for i in range(total_rows):
+                label = int(df.iloc[i]['ls_label'])
+                open_price = float(df.iloc[i]['open'])
+                
+                # 포지션 변화 감지 (현재 포지션과 라벨이 다르면 액션 수행)
+                if pos != label:
+                    # 1) 기존 포지션 청산 (라벨이 다르므로 현재 포지션이 0이 아니면 일단 청산)
+                    if pos != 0:
+                        balance *= (1 - fee_rate) # 청산 수수료
+                        exit_price = open_price
+                        if pos == 1:
+                            pnl = (exit_price - entry_price) / entry_price
+                        else: # pos == -1
+                            pnl = (entry_price - exit_price) / entry_price
+                        balance *= (1 + pnl)
+                        pos = 0
+                    
+                    # 2) 새로운 포지션 진입 (라벨이 0이 아니면 진입)
+                    if label != 0:
+                        pos = label
+                        entry_price = open_price
+                        balance *= (1 - fee_rate) # 진입 수수료
+                
+                # 3) 마지막 봉 강제 청산 처리
+                if i == total_rows - 1 and pos != 0:
+                    balance *= (1 - fee_rate) # 청산 수수료
+                    exit_price = float(df.iloc[i]['close'])
+                    if pos == 1:
+                        pnl = (exit_price - entry_price) / entry_price
+                    else:
+                        pnl = (entry_price - exit_price) / entry_price
+                    balance *= (1 + pnl)
+                    pos = 0
+                
+                # 매 봉마다 현재 자산 상태 기록
+                df.at[i, 'capital'] = balance
+
+            # 3. 결과 저장 (캐시 파일 업데이트)
+            cache_file = 'btc_usdt_1m_cache.csv'
+            if os.path.exists(cache_file):
+                full_cache = pd.read_csv(cache_file)
+                # 현재 표시된 구간의 데이터만 업데이트 (Timestamp 기준)
+                # timestamp가 datetime 객체이므로 다시 ms로 변환하여 매칭 (또는 index 매칭)
+                # populate_ui에서 변환한 형식을 고려하여 매칭 진행
+                
+                # 원본 캐시 데이터의 타임스탬프와 일치시키기 위해 ms 단위로 변환
+                # (KST 변환 전의 원본 ms 타임스탬프가 필요함. current_df 생성 시의 정보를 활용)
+                
+                # 더 안전한 방법: current_df에 있는 원본 timestamp(ms)를 사용하여 매치
+                # display_df 생성 시 copy() 했으므로, 원본 ms 값이 소실되었을 수 있음.
+                # 다시 확인: download_data에서 display_df 생성 후 timestamp를 datetime으로 변환함.
+                # 따라서 datetime을 다시 ms로 역변환하여 매칭.
+                
+                # KST(UTC+9)이므로 9시간을 빼고 ms로 변환
+                df_to_save = df.copy()
+                df_to_save['timestamp_ms'] = (pd.to_datetime(df_to_save['timestamp']) - pd.Timedelta(hours=9)).values.astype(np.int64) // 10**6
+                
+                # full_cache의 해당 timestamp 행들의 capital 업데이트
+                full_cache.set_index('timestamp', inplace=True)
+                # map을 사용하거나 update 사용
+                updates = df_to_save.set_index('timestamp_ms')['capital']
+                full_cache.update(updates.to_frame())
+                full_cache.reset_index(inplace=True)
+                full_cache.to_csv(cache_file, index=False)
+            
+            # 4. UI 갱신 (테이블 등)
+            self.populate_ui(df)
+            
+            final_capital = df.iloc[-1]['capital']
+            roi = (final_capital - 100.0)
+            QMessageBox.information(self, "백테스트 완료", 
+                                    f"백테스트가 완료되었습니다.\n"
+                                    f"최종 자산: {final_capital:.2f} USDT\n"
+                                    f"수익률: {roi:.2f}%")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "오류", f"백테스트 중 오류 발생: {str(e)}")
+
     def open_download_dialog(self):
         start_str = None
         end_str = None
@@ -476,8 +576,8 @@ class BinanceDataFetcher(QMainWindow):
         
         # Bottom: Table
         self.table = QTableWidget()
-        self.table.setColumnCount(7)
-        self.table.setHorizontalHeaderLabels(["시간 (Timestamp)", "시가 (Open)", "고가 (High)", "저가 (Low)", "종가 (Close)", "거래량 (Volume)", "LS Label"])
+        self.table.setColumnCount(8)
+        self.table.setHorizontalHeaderLabels(["시간 (Timestamp)", "시가 (Open)", "고가 (High)", "저가 (Low)", "종가 (Close)", "거래량 (Volume)", "LS Label", "자산 (Capital)"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.splitter.addWidget(self.table)
         
@@ -516,8 +616,10 @@ class BinanceDataFetcher(QMainWindow):
                 df_cache = pd.read_csv(cache_file)
                 if 'ls_label' not in df_cache.columns:
                     df_cache['ls_label'] = 0
+                if 'capital' not in df_cache.columns:
+                    df_cache['capital'] = 100.0
             else:
-                df_cache = pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'ls_label'])
+                df_cache = pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'ls_label', 'capital'])
                 
             # 다운로드해야 할 구간 (Intervals) 선별: 빠진 구간(Hole) 찾기 알고리즘
             fetch_intervals = []
@@ -571,6 +673,7 @@ class BinanceDataFetcher(QMainWindow):
             if new_ohlcv:
                 df_new = pd.DataFrame(new_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
                 df_new['ls_label'] = 0
+                df_new['capital'] = 100.0
                 df_cache = pd.concat([df_cache, df_new], ignore_index=True)
                 
             if not df_cache.empty:
@@ -610,10 +713,16 @@ class BinanceDataFetcher(QMainWindow):
                 item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
                 self.table.setItem(row_idx, col_idx + 1, item)
                 
-            # LS Label 열 추가 표기 (정수값 0)
+            # LS Label 열 표시
             ls_item = QTableWidgetItem(str(int(row.get('ls_label', 0))))
             ls_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
             self.table.setItem(row_idx, 6, ls_item)
+            
+            # Capital (자산) 열 표시
+            capital_val = row.get('capital', 100.0)
+            cap_item = QTableWidgetItem(f"{capital_val:.2f}")
+            cap_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+            self.table.setItem(row_idx, 7, cap_item)
                 
         # 2. Draw Candlestick Chart
         self.fig.clear()
