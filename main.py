@@ -103,9 +103,9 @@ class SMADialog(QDialog):
         layout = QVBoxLayout(self)
         
         period_layout = QHBoxLayout()
-        self.period_label = QLabel("기간 (1~200):")
+        self.period_label = QLabel("기간 (1~400):")
         self.period_spinbox = QSpinBox()
-        self.period_spinbox.setRange(1, 200)
+        self.period_spinbox.setRange(1, 400)
         self.period_spinbox.setValue(20) # 기본 20일/분
         period_layout.addWidget(self.period_label)
         period_layout.addWidget(self.period_spinbox)
@@ -152,6 +152,152 @@ class SMADialog(QDialog):
                 self.strategy_combo.currentText(), 
                 self.offset_spinbox.value())
 
+class SupertrendDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("3개의 슈퍼트렌드 설정")
+        self.resize(420, 460)
+
+        layout = QVBoxLayout(self)
+
+        # 슈퍼트렌드 1~3 설정
+        self.st_widgets = []
+        for i in range(1, 4):
+            group_label = QLabel(f"슈퍼트렌드 {i}")
+            group_label.setStyleSheet("font-weight: bold; margin-top: 6px;")
+            layout.addWidget(group_label)
+
+            row = QHBoxLayout()
+
+            atr_label = QLabel("ATR 기간:")
+            atr_spin = QSpinBox()
+            atr_spin.setRange(1, 200)
+            atr_spin.setValue([10, 11, 12][i - 1])
+
+            mult_label = QLabel("멀티플라이어:")
+            mult_spin = QDoubleSpinBox()
+            mult_spin.setRange(0.1, 20.0)
+            mult_spin.setSingleStep(0.1)
+            mult_spin.setValue([1.0, 2.0, 3.0][i - 1])
+
+            row.addWidget(atr_label)
+            row.addWidget(atr_spin)
+            row.addSpacing(12)
+            row.addWidget(mult_label)
+            row.addWidget(mult_spin)
+
+            layout.addLayout(row)
+            self.st_widgets.append((atr_spin, mult_spin))
+
+        # 구분선
+        from PySide6.QtWidgets import QFrame
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setFrameShadow(QFrame.Sunken)
+        layout.addSpacing(6)
+        layout.addWidget(line)
+        layout.addSpacing(2)
+
+        # LS 라벨링 체크박스
+        self.ls_checkbox = QCheckBox("LS 라벨링 적용")
+        layout.addWidget(self.ls_checkbox)
+
+        # MA 설정 위젯 (LS 사용 시만 활성화)
+        self.ma_widget = QWidget()
+        ma_layout = QVBoxLayout(self.ma_widget)
+        ma_layout.setContentsMargins(12, 0, 0, 0)
+
+        type_row = QHBoxLayout()
+        type_row.addWidget(QLabel("MA 종류:"))
+        self.type_combo = QComboBox()
+        self.type_combo.addItems(["SMA", "EMA"])
+        type_row.addWidget(self.type_combo)
+        ma_layout.addLayout(type_row)
+
+        period_row = QHBoxLayout()
+        period_row.addWidget(QLabel("MA 기간 (1~400):"))
+        self.period_spin = QSpinBox()
+        self.period_spin.setRange(1, 400)
+        self.period_spin.setValue(20)
+        period_row.addWidget(self.period_spin)
+        ma_layout.addLayout(period_row)
+
+        lookback_row = QHBoxLayout()
+        lookback_row.addWidget(QLabel("기울기 룩백 (봉 수):"))
+        self.lookback_spin = QSpinBox()
+        self.lookback_spin.setRange(1, 200)
+        self.lookback_spin.setValue(5)
+        lookback_row.addWidget(self.lookback_spin)
+        ma_layout.addLayout(lookback_row)
+
+        self.ma_widget.setEnabled(False)
+        self.ls_checkbox.toggled.connect(self.ma_widget.setEnabled)
+        layout.addWidget(self.ma_widget)
+
+        layout.addSpacing(8)
+        self.action_btn = QPushButton("차트에 추가")
+        self.action_btn.clicked.connect(self.accept)
+        layout.addWidget(self.action_btn)
+
+    def get_settings(self):
+        """st_settings=[(atr,mult),...], use_ls, ma_type, ma_period, lookback 반환"""
+        st = [(w[0].value(), w[1].value()) for w in self.st_widgets]
+        use_ls = self.ls_checkbox.isChecked()
+        return (
+            st,
+            use_ls,
+            self.type_combo.currentText() if use_ls else None,
+            self.period_spin.value()      if use_ls else None,
+            self.lookback_spin.value()    if use_ls else None,
+        )
+
+
+class MASlopeDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("이동평균 기울기 설정")
+        self.resize(340, 180)
+
+        layout = QVBoxLayout(self)
+
+        # MA 종류
+        type_row = QHBoxLayout()
+        type_row.addWidget(QLabel("MA 종류:"))
+        self.type_combo = QComboBox()
+        self.type_combo.addItems(["SMA", "EMA"])
+        type_row.addWidget(self.type_combo)
+        layout.addLayout(type_row)
+
+        # MA 기간
+        period_row = QHBoxLayout()
+        period_row.addWidget(QLabel("MA 기간 (1~400):"))
+        self.period_spin = QSpinBox()
+        self.period_spin.setRange(1, 400)
+        self.period_spin.setValue(20)
+        period_row.addWidget(self.period_spin)
+        layout.addLayout(period_row)
+
+        # 기울기 룩백
+        lookback_row = QHBoxLayout()
+        lookback_row.addWidget(QLabel("기울기 룩백 (봉 수):"))
+        self.lookback_spin = QSpinBox()
+        self.lookback_spin.setRange(1, 200)
+        self.lookback_spin.setValue(5)
+        lookback_row.addWidget(self.lookback_spin)
+        layout.addLayout(lookback_row)
+
+        self.action_btn = QPushButton("차트에 추가")
+        self.action_btn.clicked.connect(self.accept)
+        layout.addSpacing(8)
+        layout.addWidget(self.action_btn)
+
+    def get_settings(self):
+        """(ma_type, ma_period, lookback) 반환"""
+        return (self.type_combo.currentText(),
+                self.period_spin.value(),
+                self.lookback_spin.value())
+
+
 import matplotlib
 matplotlib.use('QtAgg')
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas, NavigationToolbar2QT as NavigationToolbar
@@ -171,6 +317,8 @@ class BinanceDataFetcher(QMainWindow):
         
         # State for Indicators
         self.sma_periods = []
+        self.supertrend_settings = []   # [(atr_period, multiplier), ...]
+        self.ma_slope_settings = []     # [(ma_type, ma_period, lookback), ...]
         
         # Setup Views (Chart and Table)
         self.setup_views()
@@ -223,9 +371,17 @@ class BinanceDataFetcher(QMainWindow):
         sma_action = QAction("단순 이동 평균...", self)
         sma_action.triggered.connect(self.open_sma_dialog)
         indicator_menu.addAction(sma_action)
-        
+
+        supertrend_action = QAction("3개의 슈퍼트렌드...", self)
+        supertrend_action.triggered.connect(self.open_supertrend_dialog)
+        indicator_menu.addAction(supertrend_action)
+
+        ma_slope_action = QAction("이동평균 기울기...", self)
+        ma_slope_action.triggered.connect(self.open_ma_slope_dialog)
+        indicator_menu.addAction(ma_slope_action)
+
         indicator_menu.addSeparator()
-        
+
         clear_indicator_action = QAction("지표 초기화", self)
         clear_indicator_action.triggered.connect(self.clear_indicators)
         indicator_menu.addAction(clear_indicator_action)
@@ -308,9 +464,183 @@ class BinanceDataFetcher(QMainWindow):
                 if hasattr(self, 'current_df') and not self.current_df.empty:
                     self.populate_ui(self.current_df)
 
+    def open_supertrend_dialog(self):
+        dialog = SupertrendDialog(self)
+        if dialog.exec():
+            st_settings, use_ls, ma_type, ma_period, lookback = dialog.get_settings()
+            self.supertrend_settings = st_settings
+
+            if use_ls:
+                # MA 지표도 자동 등록 (MA 선 + Slope)
+                if ma_type and ma_period and lookback:
+                    if (ma_type, ma_period, lookback) not in self.ma_slope_settings:
+                        self.ma_slope_settings.append((ma_type, ma_period, lookback))
+                    if ma_period not in self.sma_periods:
+                        self.sma_periods.append(ma_period)
+
+                # LS 라벨링 수행
+                self.apply_supertrend_ls_labeling(st_settings, ma_type, ma_period, lookback)
+            else:
+                if hasattr(self, 'current_df') and not self.current_df.empty:
+                    self.populate_ui(self.current_df)
+
+    def apply_supertrend_ls_labeling(self, st_settings, ma_type, ma_period, lookback):
+        """3개 슈퍼트렌드 + MA Slope 조건으로 ls_label 설정 후 화면 갱신"""
+        import os
+        cache_file = 'btc_usdt_1m_cache.csv'
+        if not os.path.exists(cache_file):
+            QMessageBox.warning(self, "오류", "캐시 파일이 없습니다. 데이터를 먼저 받아오세요.")
+            return
+
+        self.setWindowTitle("Binance Futures BTC - 라벨링 연산 중...")
+        QApplication.processEvents()
+
+        try:
+            df = pd.read_csv(cache_file)
+            if 'ls_label' not in df.columns:
+                df['ls_label'] = 0
+
+            # 원본 df로 슈퍼트렌드 3개 계산
+            raw = df[['open', 'high', 'low', 'close']].copy()
+            directions = []
+            for atr_p, mult in st_settings:
+                _, d = self.calculate_supertrend(raw, atr_p, mult)
+                directions.append(d)  # d[i] = 1(상승) or -1(하락)
+
+            # MA 계산
+            if ma_type == 'EMA':
+                ma_series = df['close'].ewm(span=ma_period, adjust=False).mean()
+            else:
+                ma_series = df['close'].rolling(window=ma_period).mean()
+
+            # MA Slope 계산
+            slope_series = ma_series - ma_series.shift(lookback)
+
+            opens = df['open'].values
+            ma_vals = ma_series.values
+            slope_vals = slope_series.values
+
+            # 라벨 초기화 후 조건 적용
+            labels = np.zeros(len(df), dtype=int)
+            for i in range(len(df)):
+                if np.isnan(slope_vals[i]) or np.isnan(ma_vals[i]):
+                    continue
+                bull_count = sum(1 for d in directions if d[i] == 1)
+                bear_count = sum(1 for d in directions if d[i] == -1)
+
+                # 조건 6: 상승
+                if (slope_vals[i] > 0
+                        and opens[i] > ma_vals[i]
+                        and bull_count >= 2):
+                    labels[i] = 1
+                # 조건 7: 하락
+                elif (slope_vals[i] < 0
+                        and opens[i] < ma_vals[i]
+                        and bear_count >= 2):
+                    labels[i] = -1
+
+            df['ls_label'] = labels
+            df.to_csv(cache_file, index=False)
+
+            QMessageBox.information(self, "라벨링 완료",
+                                    f"슈퍼트렌드 + {ma_type}({ma_period}) Slope({lookback}) 조건으로 "
+                                    f"LS 라벨 갱신 완료\n"
+                                    f"Long: {(labels==1).sum()}개, Short: {(labels==-1).sum()}개")
+
+            if hasattr(self, 'last_start_ms') and hasattr(self, 'last_end_ms'):
+                self.download_data(self.last_start_ms, self.last_end_ms)
+
+        except Exception as e:
+            QMessageBox.critical(self, "오류", f"라벨링 중 오류 발생: {str(e)}")
+        finally:
+            self.setWindowTitle("Binance Futures BTC OHLCV Downloader")
+
+    def open_ma_slope_dialog(self):
+        dialog = MASlopeDialog(self)
+        if dialog.exec():
+            setting = dialog.get_settings()  # (ma_type, ma_period, lookback)
+            self.ma_slope_settings.append(setting)
+            if hasattr(self, 'current_df') and not self.current_df.empty:
+                self.populate_ui(self.current_df)
+
+    def calculate_supertrend(self, df, atr_period, multiplier):
+        """TradingView 방식의 슈퍼트렌드 계산.
+        - ATR: RMA(Wilder's 평활이동평균, alpha=1/period)
+        - 밴드: 이전 밴드값과 비교하여 한 방향으로만 수렴
+        - direction: 1=상승(bullish), -1=하락(bearish)
+        """
+        high  = df['high'].values.astype(float)
+        low   = df['low'].values.astype(float)
+        close = df['close'].values.astype(float)
+        n = len(close)
+
+        # True Range
+        tr = np.zeros(n)
+        tr[0] = high[0] - low[0]
+        for i in range(1, n):
+            tr[i] = max(high[i] - low[i],
+                        abs(high[i] - close[i - 1]),
+                        abs(low[i]  - close[i - 1]))
+
+        # ATR via RMA (Wilder's smoothing): 첫 값은 단순평균으로 시드
+        atr = np.zeros(n)
+        seed_end = min(atr_period, n)
+        atr[seed_end - 1] = np.mean(tr[:seed_end])
+        alpha = 1.0 / atr_period
+        for i in range(seed_end, n):
+            atr[i] = alpha * tr[i] + (1.0 - alpha) * atr[i - 1]
+
+        # 기본 밴드
+        hl2 = (high + low) / 2.0
+        basic_upper = hl2 + multiplier * atr
+        basic_lower = hl2 - multiplier * atr
+
+        # 최종 밴드 & 슈퍼트렌드
+        final_upper = np.copy(basic_upper)
+        final_lower = np.copy(basic_lower)
+        supertrend  = np.zeros(n)
+        direction   = np.zeros(n, dtype=int)
+
+        # 초기 방향 결정
+        direction[0] = 1 if close[0] >= final_lower[0] else -1
+        supertrend[0] = final_lower[0] if direction[0] == 1 else final_upper[0]
+
+        for i in range(1, n):
+            # Final Upper: 새 밴드가 이전 밴드보다 낮거나, 이전 종가가 이전 밴드를 상향 돌파하면 갱신
+            if basic_upper[i] < final_upper[i - 1] or close[i - 1] > final_upper[i - 1]:
+                final_upper[i] = basic_upper[i]
+            else:
+                final_upper[i] = final_upper[i - 1]
+
+            # Final Lower: 새 밴드가 이전 밴드보다 높거나, 이전 종가가 이전 밴드를 하향 돌파하면 갱신
+            if basic_lower[i] > final_lower[i - 1] or close[i - 1] < final_lower[i - 1]:
+                final_lower[i] = basic_lower[i]
+            else:
+                final_lower[i] = final_lower[i - 1]
+
+            # 방향 전환 판정
+            if direction[i - 1] == -1:   # 이전이 하락(bearish)
+                if close[i] > final_upper[i]:
+                    direction[i] = 1
+                    supertrend[i] = final_lower[i]
+                else:
+                    direction[i] = -1
+                    supertrend[i] = final_upper[i]
+            else:                         # 이전이 상승(bullish)
+                if close[i] < final_lower[i]:
+                    direction[i] = -1
+                    supertrend[i] = final_upper[i]
+                else:
+                    direction[i] = 1
+                    supertrend[i] = final_lower[i]
+
+        return supertrend, direction
+
     def clear_indicators(self):
-        if self.sma_periods:
+        if self.sma_periods or self.supertrend_settings or self.ma_slope_settings:
             self.sma_periods.clear()
+            self.supertrend_settings.clear()
+            self.ma_slope_settings.clear()
             if hasattr(self, 'current_df') and not self.current_df.empty:
                 self.populate_ui(self.current_df)
             QMessageBox.information(self, "지표 초기화", "추가된 모든 지표가 차트에서 제거되었습니다.")
@@ -441,54 +771,52 @@ class BinanceDataFetcher(QMainWindow):
         if not hasattr(self, 'current_df') or self.current_df.empty:
             QMessageBox.warning(self, "백테스트", "백테스트를 수행할 데이터가 없습니다.")
             return
-            
+
         import os
         try:
-            # 1. 초기값 설정 및 준비
+            # 규칙 1: capital 100으로 초기화
             df = self.current_df.copy()
-            fee_rate = 0.0005 # 0.05%
+            df['capital'] = 100.0
+            fee_rate = 0.0005  # 0.05%
             balance = 100.0
-            pos = 0 # 0: None, 1: Long, -1: Short
+            pos = 0          # 0: 없음, 1: Long, -1: Short
             entry_price = 0.0
-            
+
             total_rows = len(df)
-            
-            # 2. 거래 시뮬레이션
+
+            # 규칙 2~6: 봉 단위 가상 거래 시뮬레이션
             for i in range(total_rows):
-                label = int(df.iloc[i]['ls_label'])
+                label      = int(df.iloc[i]['ls_label'])
                 open_price = float(df.iloc[i]['open'])
-                
-                # 포지션 변화 감지 (현재 포지션과 라벨이 다르면 액션 수행)
-                if pos != label:
-                    # 1) 기존 포지션 청산 (라벨이 다르므로 현재 포지션이 0이 아니면 일단 청산)
-                    if pos != 0:
-                        balance *= (1 - fee_rate) # 청산 수수료
-                        exit_price = open_price
-                        if pos == 1:
-                            pnl = (exit_price - entry_price) / entry_price
-                        else: # pos == -1
-                            pnl = (entry_price - exit_price) / entry_price
-                        balance *= (1 + pnl)
-                        pos = 0
-                    
-                    # 2) 새로운 포지션 진입 (라벨이 0이 아니면 진입)
-                    if label != 0:
-                        pos = label
-                        entry_price = open_price
-                        balance *= (1 - fee_rate) # 진입 수수료
-                
-                # 3) 마지막 봉 강제 청산 처리
-                if i == total_rows - 1 and pos != 0:
-                    balance *= (1 - fee_rate) # 청산 수수료
-                    exit_price = float(df.iloc[i]['close'])
+
+                # 규칙 5-4: 현재 포지션과 다른 label이 나타나면 청산만 수행
+                if pos != 0 and label != pos:
+                    balance *= (1 - fee_rate)          # 청산 수수료
                     if pos == 1:
-                        pnl = (exit_price - entry_price) / entry_price
-                    else:
-                        pnl = (entry_price - exit_price) / entry_price
+                        pnl = (open_price - entry_price) / entry_price
+                    else:  # pos == -1
+                        pnl = (entry_price - open_price) / entry_price
                     balance *= (1 + pnl)
                     pos = 0
-                
-                # 매 봉마다 현재 자산 상태 기록
+
+                # 규칙 5-2/5-3: 포지션이 없고 label이 있으면 진입
+                if pos == 0 and label != 0:
+                    pos = label
+                    entry_price = open_price
+                    balance *= (1 - fee_rate)          # 진입 수수료
+
+                # 규칙 5-5: 마지막 봉에 포지션이 남아 있으면 close로 청산
+                if i == total_rows - 1 and pos != 0:
+                    close_price = float(df.iloc[i]['close'])
+                    balance *= (1 - fee_rate)          # 청산 수수료
+                    if pos == 1:
+                        pnl = (close_price - entry_price) / entry_price
+                    else:
+                        pnl = (entry_price - close_price) / entry_price
+                    balance *= (1 + pnl)
+                    pos = 0
+
+                # 규칙 6: 매 봉 capital 기록
                 df.at[i, 'capital'] = balance
 
             # 3. 결과 저장 (캐시 파일 업데이트)
@@ -733,8 +1061,17 @@ class BinanceDataFetcher(QMainWindow):
         for col in ['open', 'high', 'low', 'close', 'volume']:
             plot_df[col] = plot_df[col].astype(float)
             
-        ax = self.fig.add_subplot(111)
-        
+        # MA Slope 패널 여부에 따라 서브플롯 구성
+        has_slope = bool(self.ma_slope_settings)
+        if has_slope:
+            from matplotlib.gridspec import GridSpec
+            gs = GridSpec(2, 1, figure=self.fig, height_ratios=[3, 1], hspace=0.08)
+            ax = self.fig.add_subplot(gs[0])
+            ax_slope = self.fig.add_subplot(gs[1], sharex=ax)
+        else:
+            ax = self.fig.add_subplot(111)
+            ax_slope = None
+
         # 한국인에게 친숙한 색상 (상승: 빨강, 하락: 파랑)
         mc = mpf.make_marketcolors(up='red', down='blue', edge='inherit', wick='inherit')
         style = mpf.make_mpf_style(marketcolors=mc)
@@ -752,6 +1089,25 @@ class BinanceDataFetcher(QMainWindow):
                 plot_df[col_name] = plot_df['close'].rolling(window=period).mean()
                 color = sma_colors[idx % len(sma_colors)]
                 addplots.append(mpf.make_addplot(plot_df[col_name], type='line', color=color, width=1.0, ax=ax))
+
+        # 슈퍼트렌드 렌더링 (상승: 초록, 하락: 빨강)
+        st_bull_colors = ['#00c853', '#00897b', '#1565c0']  # 3개 각각 구분 색
+        st_bear_colors = ['#d50000', '#ff6d00', '#aa00ff']
+        if hasattr(self, 'supertrend_settings') and self.supertrend_settings:
+            raw_vals = plot_df[['open', 'high', 'low', 'close']].copy().reset_index(drop=True)
+            for st_idx, (atr_period, multiplier) in enumerate(self.supertrend_settings):
+                st_line, direction = self.calculate_supertrend(raw_vals, atr_period, multiplier)
+                bull_arr = np.where(direction == 1, st_line, np.nan)
+                bear_arr = np.where(direction == -1, st_line, np.nan)
+                bull_series = pd.Series(bull_arr, index=plot_df.index)
+                bear_series = pd.Series(bear_arr, index=plot_df.index)
+                if not np.isnan(bull_arr).all():
+                    addplots.append(mpf.make_addplot(bull_series, type='line',
+                                                     color=st_bull_colors[st_idx % 3], width=1.5, ax=ax))
+                if not np.isnan(bear_arr).all():
+                    addplots.append(mpf.make_addplot(bear_series, type='line',
+                                                     color=st_bear_colors[st_idx % 3], width=1.5, ax=ax))
+
         if hasattr(self, 'show_label_action') and self.show_label_action.isChecked() and 'ls_label' in plot_df.columns:
             offset = plot_df['close'] * 0.0005
             
@@ -770,6 +1126,32 @@ class BinanceDataFetcher(QMainWindow):
             mpf.plot(plot_df, type='candle', ax=ax, style=style, xrotation=0, show_nontrading=True, axtitle="BTC/USDT 1m (Binance Futures)", ylabel="Price (USDT)", addplot=addplots)
         else:
             mpf.plot(plot_df, type='candle', ax=ax, style=style, xrotation=0, show_nontrading=True, axtitle="BTC/USDT 1m (Binance Futures)", ylabel="Price (USDT)")
+
+        # MA Slope 패널 렌더링
+        if ax_slope is not None:
+            slope_line_colors = ['#2196f3', '#ff9800', '#9c27b0']
+            ax_slope.axhline(y=0, color='#888888', linewidth=0.8, linestyle='-')
+            x_nums = mdates.date2num(plot_df.index.to_pydatetime())
+            for idx, (ma_type, ma_period, lookback) in enumerate(self.ma_slope_settings):
+                if ma_type == 'EMA':
+                    ma_series = plot_df['close'].ewm(span=ma_period, adjust=False).mean()
+                else:  # SMA
+                    ma_series = plot_df['close'].rolling(window=ma_period).mean()
+                slope = ma_series - ma_series.shift(lookback)
+                slope_vals = slope.values
+                color = slope_line_colors[idx % len(slope_line_colors)]
+                ax_slope.plot(x_nums, slope_vals, color=color, linewidth=1.0,
+                              label=f'{ma_type}({ma_period}) Slope({lookback})')
+                valid = ~np.isnan(slope_vals)
+                ax_slope.fill_between(x_nums, slope_vals, 0,
+                                      where=valid & (slope_vals >= 0),
+                                      color='#00c853', alpha=0.3, interpolate=True)
+                ax_slope.fill_between(x_nums, slope_vals, 0,
+                                      where=valid & (slope_vals < 0),
+                                      color='#d50000', alpha=0.3, interpolate=True)
+            ax_slope.set_ylabel('MA Slope', fontsize=8)
+            ax_slope.legend(fontsize=7, loc='upper left')
+            ax_slope.grid(axis='y', linestyle='--', linewidth=0.4, alpha=0.6)
         
         # 사용자 맞춤형 X축 날짜/시간 포매터 정의
         import matplotlib.ticker as ticker
@@ -795,12 +1177,18 @@ class BinanceDataFetcher(QMainWindow):
                     
         ax.xaxis.set_major_locator(mdates.AutoDateLocator())
         ax.xaxis.set_major_formatter(CustomDateFormatter())
-        
-        # 차트 우측상단(또는 하단)에 표시되는 마우스 커서 위치의 X축 좌표 포맷을 명시적으로 지정
         ax.format_xdata = mdates.DateFormatter('%Y-%m-%d %H:%M')
-        
+
+        # Slope 패널이 있으면 메인 차트 X축 라벨을 숨기고 slope 패널에 포매터 적용
+        if ax_slope is not None:
+            import matplotlib.pyplot as plt
+            plt.setp(ax.get_xticklabels(), visible=False)
+            ax_slope.xaxis.set_major_locator(mdates.AutoDateLocator())
+            ax_slope.xaxis.set_major_formatter(CustomDateFormatter())
+            ax_slope.format_xdata = mdates.DateFormatter('%Y-%m-%d %H:%M')
+
         self.update_marker_sizes(ax)
-        
+
         self.fig.tight_layout()
         self.canvas.draw()
         
