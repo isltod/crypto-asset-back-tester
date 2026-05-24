@@ -9,13 +9,36 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PySide6.QtCore import QDateTime, Qt, QTimer
 from PySide6.QtGui import QAction
 
+# 타임프레임별 설정 상수
+TIMEFRAME_CONFIG = {
+    '1m':  {'label': '1분',  'ms': 60_000,        'ccxt': '1m',  'cache': 'btc_usdt_1m_cache.csv'},
+    '5m':  {'label': '5분',  'ms': 300_000,       'ccxt': '5m',  'cache': 'btc_usdt_5m_cache.csv'},
+    '30m': {'label': '30분', 'ms': 1_800_000,     'ccxt': '30m', 'cache': 'btc_usdt_30m_cache.csv'},
+    '1h':  {'label': '1시간','ms': 3_600_000,     'ccxt': '1h',  'cache': 'btc_usdt_1h_cache.csv'},
+    '4h':  {'label': '4시간','ms': 14_400_000,    'ccxt': '4h',  'cache': 'btc_usdt_4h_cache.csv'},
+    '1d':  {'label': '1일',  'ms': 86_400_000,    'ccxt': '1d',  'cache': 'btc_usdt_1d_cache.csv'},
+}
+TIMEFRAME_KEYS = ['1m', '5m', '30m', '1h', '4h', '1d']
+
 class DownloadDialog(QDialog):
-    def __init__(self, parent=None, start_str=None, end_str=None):
+    def __init__(self, parent=None, start_str=None, end_str=None, timeframe='1m'):
         super().__init__(parent)
-        self.setWindowTitle("데이터 다운로드 기간 설정")
-        self.resize(350, 150)
+        self.setWindowTitle("데이터 다운로드 설정")
+        self.resize(380, 200)
         
         layout = QVBoxLayout(self)
+
+        # Timeframe 선택
+        tf_layout = QHBoxLayout()
+        tf_layout.addWidget(QLabel("시간 틀 선택:"))
+        self.tf_combo = QComboBox()
+        for key in TIMEFRAME_KEYS:
+            self.tf_combo.addItem(TIMEFRAME_CONFIG[key]['label'], key)
+        # 현재 선택된 타임프레임으로 초기화
+        idx = TIMEFRAME_KEYS.index(timeframe) if timeframe in TIMEFRAME_KEYS else 0
+        self.tf_combo.setCurrentIndex(idx)
+        tf_layout.addWidget(self.tf_combo)
+        layout.addLayout(tf_layout)
         
         # Start Time
         start_layout = QHBoxLayout()
@@ -52,8 +75,11 @@ class DownloadDialog(QDialog):
         layout.addWidget(self.download_btn)
         
     def get_dates(self):
-        # returns start_ms, end_ms
-        return self.start_dt.dateTime().toMSecsSinceEpoch(), self.end_dt.dateTime().toMSecsSinceEpoch()
+        """start_ms, end_ms, timeframe_key 반환"""
+        tf_key = self.tf_combo.currentData()
+        return (self.start_dt.dateTime().toMSecsSinceEpoch(),
+                self.end_dt.dateTime().toMSecsSinceEpoch(),
+                tf_key)
 
 class LabelingDialog(QDialog):
     def __init__(self, parent=None):
@@ -298,6 +324,205 @@ class MASlopeDialog(QDialog):
                 self.lookback_spin.value())
 
 
+class HullSuiteDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Hull Suite 설정")
+        self.resize(320, 180)
+        
+        layout = QVBoxLayout(self)
+        
+        period_layout = QHBoxLayout()
+        self.period_label = QLabel("기간 (1~400):")
+        self.period_spinbox = QSpinBox()
+        self.period_spinbox.setRange(1, 400)
+        self.period_spinbox.setValue(55)
+        period_layout.addWidget(self.period_label)
+        period_layout.addWidget(self.period_spinbox)
+        layout.addLayout(period_layout)
+        
+        self.ls_checkbox = QCheckBox("LS 라벨링 적용")
+        layout.addWidget(self.ls_checkbox)
+        
+        self.action_btn = QPushButton("차트에 추가")
+        self.action_btn.clicked.connect(self.accept)
+        layout.addWidget(self.action_btn)
+        
+    def get_settings(self):
+        return (self.period_spinbox.value(), self.ls_checkbox.isChecked())
+
+
+class SqueezeDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Squeeze Momentum 설정")
+        self.resize(320, 260)
+        
+        layout = QVBoxLayout(self)
+        
+        # BB
+        bb_len_layout = QHBoxLayout()
+        bb_len_layout.addWidget(QLabel("BB 기간:"))
+        self.bb_len_spin = QSpinBox()
+        self.bb_len_spin.setRange(1, 400)
+        self.bb_len_spin.setValue(20)
+        bb_len_layout.addWidget(self.bb_len_spin)
+        layout.addLayout(bb_len_layout)
+        
+        bb_mult_layout = QHBoxLayout()
+        bb_mult_layout.addWidget(QLabel("BB 승수:"))
+        self.bb_mult_spin = QDoubleSpinBox()
+        self.bb_mult_spin.setRange(0.1, 20.0)
+        self.bb_mult_spin.setSingleStep(0.1)
+        self.bb_mult_spin.setValue(2.0)
+        bb_mult_layout.addWidget(self.bb_mult_spin)
+        layout.addLayout(bb_mult_layout)
+        
+        # KC
+        kc_len_layout = QHBoxLayout()
+        kc_len_layout.addWidget(QLabel("KC 기간:"))
+        self.kc_len_spin = QSpinBox()
+        self.kc_len_spin.setRange(1, 400)
+        self.kc_len_spin.setValue(20)
+        kc_len_layout.addWidget(self.kc_len_spin)
+        layout.addLayout(kc_len_layout)
+        
+        kc_mult_layout = QHBoxLayout()
+        kc_mult_layout.addWidget(QLabel("KC 승수:"))
+        self.kc_mult_spin = QDoubleSpinBox()
+        self.kc_mult_spin.setRange(0.1, 20.0)
+        self.kc_mult_spin.setSingleStep(0.1)
+        self.kc_mult_spin.setValue(1.5)
+        kc_mult_layout.addWidget(self.kc_mult_spin)
+        layout.addLayout(kc_mult_layout)
+        
+        self.ls_checkbox = QCheckBox("LS 라벨링 적용")
+        layout.addWidget(self.ls_checkbox)
+        
+        self.action_btn = QPushButton("차트에 추가")
+        self.action_btn.clicked.connect(self.accept)
+        layout.addWidget(self.action_btn)
+        
+    def get_settings(self):
+        return (self.bb_len_spin.value(), self.bb_mult_spin.value(),
+                self.kc_len_spin.value(), self.kc_mult_spin.value(),
+                self.ls_checkbox.isChecked())
+
+
+class WaveTrendDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("WaveTrend Oscillator 설정")
+        self.resize(320, 240)
+        
+        layout = QVBoxLayout(self)
+        
+        ch_len_layout = QHBoxLayout()
+        ch_len_layout.addWidget(QLabel("채널 기간:"))
+        self.ch_len_spin = QSpinBox()
+        self.ch_len_spin.setRange(1, 400)
+        self.ch_len_spin.setValue(10)
+        ch_len_layout.addWidget(self.ch_len_spin)
+        layout.addLayout(ch_len_layout)
+        
+        avg_len_layout = QHBoxLayout()
+        avg_len_layout.addWidget(QLabel("평균 기간:"))
+        self.avg_len_spin = QSpinBox()
+        self.avg_len_spin.setRange(1, 400)
+        self.avg_len_spin.setValue(21)
+        avg_len_layout.addWidget(self.avg_len_spin)
+        layout.addLayout(avg_len_layout)
+        
+        ob_layout = QHBoxLayout()
+        ob_layout.addWidget(QLabel("과매수 레벨 1:"))
+        self.ob_spin = QSpinBox()
+        self.ob_spin.setRange(0, 100)
+        self.ob_spin.setValue(60)
+        ob_layout.addWidget(self.ob_spin)
+        layout.addLayout(ob_layout)
+        
+        os_layout = QHBoxLayout()
+        os_layout.addWidget(QLabel("과매도 레벨 1:"))
+        self.os_spin = QSpinBox()
+        self.os_spin.setRange(-100, 0)
+        self.os_spin.setValue(-60)
+        os_layout.addWidget(self.os_spin)
+        layout.addLayout(os_layout)
+        
+        self.ls_checkbox = QCheckBox("LS 라벨링 적용")
+        layout.addWidget(self.ls_checkbox)
+        
+        self.action_btn = QPushButton("차트에 추가")
+        self.action_btn.clicked.connect(self.accept)
+        layout.addWidget(self.action_btn)
+        
+    def get_settings(self):
+        return (self.ch_len_spin.value(), self.avg_len_spin.value(),
+                self.ob_spin.value(), self.os_spin.value(),
+                self.ls_checkbox.isChecked())
+
+
+class MtfMacdDialog(QDialog):
+    def __init__(self, parent=None, current_tf='1m'):
+        super().__init__(parent)
+        self.setWindowTitle("다중 타임프레임 MACD 설정")
+        self.resize(320, 260)
+        
+        layout = QVBoxLayout(self)
+        
+        tf_layout = QHBoxLayout()
+        tf_layout.addWidget(QLabel("대상 시간 틀:"))
+        self.tf_combo = QComboBox()
+        for key in TIMEFRAME_KEYS:
+            self.tf_combo.addItem(TIMEFRAME_CONFIG[key]['label'], key)
+        # 기본값은 현재 타임프레임보다 한 단계 높은 타임프레임 혹은 현재 타임프레임으로
+        try:
+            curr_idx = TIMEFRAME_KEYS.index(current_tf)
+            default_idx = min(curr_idx + 1, len(TIMEFRAME_KEYS) - 1)
+        except ValueError:
+            default_idx = 0
+        self.tf_combo.setCurrentIndex(default_idx)
+        tf_layout.addWidget(self.tf_combo)
+        layout.addLayout(tf_layout)
+        
+        fast_layout = QHBoxLayout()
+        fast_layout.addWidget(QLabel("빠른 EMA 기간:"))
+        self.fast_spin = QSpinBox()
+        self.fast_spin.setRange(1, 400)
+        self.fast_spin.setValue(12)
+        fast_layout.addWidget(self.fast_spin)
+        layout.addLayout(fast_layout)
+        
+        slow_layout = QHBoxLayout()
+        slow_layout.addWidget(QLabel("느린 EMA 기간:"))
+        self.slow_spin = QSpinBox()
+        self.slow_spin.setRange(1, 400)
+        self.slow_spin.setValue(26)
+        slow_layout.addWidget(self.slow_spin)
+        layout.addLayout(slow_layout)
+        
+        sig_layout = QHBoxLayout()
+        sig_layout.addWidget(QLabel("시그널 기간:"))
+        self.sig_spin = QSpinBox()
+        self.sig_spin.setRange(1, 400)
+        self.sig_spin.setValue(9)
+        sig_layout.addWidget(self.sig_spin)
+        layout.addLayout(sig_layout)
+        
+        self.ls_checkbox = QCheckBox("LS 라벨링 적용")
+        layout.addWidget(self.ls_checkbox)
+        
+        self.action_btn = QPushButton("차트에 추가")
+        self.action_btn.clicked.connect(self.accept)
+        layout.addWidget(self.action_btn)
+        
+    def get_settings(self):
+        return (self.tf_combo.currentData(), self.fast_spin.value(),
+                self.slow_spin.value(), self.sig_spin.value(),
+                self.ls_checkbox.isChecked())
+
+
+
 import matplotlib
 matplotlib.use('QtAgg')
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas, NavigationToolbar2QT as NavigationToolbar
@@ -319,6 +544,13 @@ class BinanceDataFetcher(QMainWindow):
         self.sma_periods = []
         self.supertrend_settings = []   # [(atr_period, multiplier), ...]
         self.ma_slope_settings = []     # [(ma_type, ma_period, lookback), ...]
+        self.hull_suite_settings = []    # [length, ...]
+        self.squeeze_settings = []       # [(bb_len, bb_mult, kc_len, kc_mult), ...]
+        self.wavetrend_settings = []     # [(ch_len, avg_len, ob_level, os_level), ...]
+        self.mtf_macd_settings = []      # [(tf_key, fast_len, slow_len, sig_len), ...]
+
+        # 현재 선택된 타임프레임 (기본값: 1분)
+        self.current_timeframe = '1m'
         
         # Setup Views (Chart and Table)
         self.setup_views()
@@ -380,6 +612,22 @@ class BinanceDataFetcher(QMainWindow):
         ma_slope_action.triggered.connect(self.open_ma_slope_dialog)
         indicator_menu.addAction(ma_slope_action)
 
+        hull_action = QAction("Hull Suite...", self)
+        hull_action.triggered.connect(self.open_hull_suite_dialog)
+        indicator_menu.addAction(hull_action)
+
+        squeeze_action = QAction("Squeeze Momentum...", self)
+        squeeze_action.triggered.connect(self.open_squeeze_dialog)
+        indicator_menu.addAction(squeeze_action)
+
+        wt_action = QAction("WaveTrend Oscillator...", self)
+        wt_action.triggered.connect(self.open_wavetrend_dialog)
+        indicator_menu.addAction(wt_action)
+
+        macd_action = QAction("다중 타임프레임 MACD...", self)
+        macd_action.triggered.connect(self.open_mtf_macd_dialog)
+        indicator_menu.addAction(macd_action)
+
         indicator_menu.addSeparator()
 
         clear_indicator_action = QAction("지표 초기화", self)
@@ -392,7 +640,7 @@ class BinanceDataFetcher(QMainWindow):
             self.populate_ui(self.current_df)
 
     def apply_sma_breakout_labeling(self, period, strategy, offset_pct):
-        cache_file = 'btc_usdt_1m_cache.csv'
+        cache_file = TIMEFRAME_CONFIG[self.current_timeframe]['cache']
         import os
         
         if not os.path.exists(cache_file):
@@ -443,7 +691,7 @@ class BinanceDataFetcher(QMainWindow):
             
             if hasattr(self, 'last_start_ms') and hasattr(self, 'last_end_ms'):
                 # 캐시 파일을 데이터프레임으로 갱신 후 화면 리렌더링
-                self.download_data(self.last_start_ms, self.last_end_ms)
+                self.download_data(self.last_start_ms, self.last_end_ms, self.current_timeframe)
                 
         except Exception as e:
             QMessageBox.critical(self, "오류", f"라벨링 중 오류 발생: {str(e)}")
@@ -487,7 +735,7 @@ class BinanceDataFetcher(QMainWindow):
     def apply_supertrend_ls_labeling(self, st_settings, ma_type, ma_period, lookback):
         """3개 슈퍼트렌드 + MA Slope 조건으로 ls_label 설정 후 화면 갱신"""
         import os
-        cache_file = 'btc_usdt_1m_cache.csv'
+        cache_file = TIMEFRAME_CONFIG[self.current_timeframe]['cache']
         if not os.path.exists(cache_file):
             QMessageBox.warning(self, "오류", "캐시 파일이 없습니다. 데이터를 먼저 받아오세요.")
             return
@@ -548,12 +796,339 @@ class BinanceDataFetcher(QMainWindow):
                                     f"Long: {(labels==1).sum()}개, Short: {(labels==-1).sum()}개")
 
             if hasattr(self, 'last_start_ms') and hasattr(self, 'last_end_ms'):
-                self.download_data(self.last_start_ms, self.last_end_ms)
+                self.download_data(self.last_start_ms, self.last_end_ms, self.current_timeframe)
 
         except Exception as e:
             QMessageBox.critical(self, "오류", f"라벨링 중 오류 발생: {str(e)}")
         finally:
             self.setWindowTitle("Binance Futures BTC OHLCV Downloader")
+
+    def open_hull_suite_dialog(self):
+        dialog = HullSuiteDialog(self)
+        if dialog.exec():
+            length, use_ls = dialog.get_settings()
+            if length not in self.hull_suite_settings:
+                self.hull_suite_settings.append(length)
+            
+            if use_ls:
+                self.apply_hull_suite_ls_labeling(length)
+            else:
+                if hasattr(self, 'current_df') and not self.current_df.empty:
+                    self.populate_ui(self.current_df)
+
+    def apply_hull_suite_ls_labeling(self, length):
+        import os
+        cache_file = TIMEFRAME_CONFIG[self.current_timeframe]['cache']
+        if not os.path.exists(cache_file):
+            QMessageBox.warning(self, "오류", "캐시 파일이 없습니다. 데이터를 먼저 받아오세요.")
+            return
+
+        self.setWindowTitle("Binance Futures BTC - Hull Suite 라벨링 중...")
+        QApplication.processEvents()
+
+        try:
+            df = pd.read_csv(cache_file)
+            
+            hma = self.calculate_hma(df['close'], length)
+            prev_hma = hma.shift(1)
+            
+            labels = np.zeros(len(df), dtype=int)
+            labels = np.where(hma > prev_hma, 1, np.where(hma < prev_hma, -1, 0))
+            labels[np.isnan(hma)] = 0
+            
+            df['ls_label'] = labels
+            df.to_csv(cache_file, index=False)
+
+            QMessageBox.information(self, "라벨링 완료",
+                                    f"Hull Suite({length}) 기준으로 "
+                                    f"LS 라벨 갱신 완료\n"
+                                    f"Long: {(labels==1).sum()}개, Short: {(labels==-1).sum()}개")
+
+            if hasattr(self, 'last_start_ms') and hasattr(self, 'last_end_ms'):
+                self.download_data(self.last_start_ms, self.last_end_ms, self.current_timeframe)
+
+        except Exception as e:
+            QMessageBox.critical(self, "오류", f"라벨링 중 오류 발생: {str(e)}")
+        finally:
+            self.setWindowTitle("Binance Futures BTC OHLCV Downloader")
+
+    def open_squeeze_dialog(self):
+        dialog = SqueezeDialog(self)
+        if dialog.exec():
+            bb_len, bb_mult, kc_len, kc_mult, use_ls = dialog.get_settings()
+            setting = (bb_len, bb_mult, kc_len, kc_mult)
+            if setting not in self.squeeze_settings:
+                self.squeeze_settings.append(setting)
+            
+            if use_ls:
+                self.apply_squeeze_ls_labeling(bb_len, bb_mult, kc_len, kc_mult)
+            else:
+                if hasattr(self, 'current_df') and not self.current_df.empty:
+                    self.populate_ui(self.current_df)
+
+    def apply_squeeze_ls_labeling(self, bb_len, bb_mult, kc_len, kc_mult):
+        import os
+        cache_file = TIMEFRAME_CONFIG[self.current_timeframe]['cache']
+        if not os.path.exists(cache_file):
+            QMessageBox.warning(self, "오류", "캐시 파일이 없습니다. 데이터를 먼저 받아오세요.")
+            return
+
+        self.setWindowTitle("Binance Futures BTC - Squeeze Momentum 라벨링 중...")
+        QApplication.processEvents()
+
+        try:
+            df = pd.read_csv(cache_file)
+            
+            sqz_val, _, _ = self.calculate_squeeze_momentum(df, bb_len, bb_mult, kc_len, kc_mult)
+            
+            labels = np.where(sqz_val > 0, 1, np.where(sqz_val < 0, -1, 0))
+            labels[np.isnan(sqz_val)] = 0
+            
+            df['ls_label'] = labels
+            df.to_csv(cache_file, index=False)
+
+            QMessageBox.information(self, "라벨링 완료",
+                                    f"Squeeze Momentum 기준으로 "
+                                    f"LS 라벨 갱신 완료\n"
+                                    f"Long: {(labels==1).sum()}개, Short: {(labels==-1).sum()}개")
+
+            if hasattr(self, 'last_start_ms') and hasattr(self, 'last_end_ms'):
+                self.download_data(self.last_start_ms, self.last_end_ms, self.current_timeframe)
+
+        except Exception as e:
+            QMessageBox.critical(self, "오류", f"라벨링 중 오류 발생: {str(e)}")
+        finally:
+            self.setWindowTitle("Binance Futures BTC OHLCV Downloader")
+
+    def open_wavetrend_dialog(self):
+        dialog = WaveTrendDialog(self)
+        if dialog.exec():
+            ch_len, avg_len, ob_level, os_level, use_ls = dialog.get_settings()
+            setting = (ch_len, avg_len, ob_level, os_level)
+            if setting not in self.wavetrend_settings:
+                self.wavetrend_settings.append(setting)
+            
+            if use_ls:
+                self.apply_wavetrend_ls_labeling(ch_len, avg_len)
+            else:
+                if hasattr(self, 'current_df') and not self.current_df.empty:
+                    self.populate_ui(self.current_df)
+
+    def apply_wavetrend_ls_labeling(self, ch_len, avg_len):
+        import os
+        cache_file = TIMEFRAME_CONFIG[self.current_timeframe]['cache']
+        if not os.path.exists(cache_file):
+            QMessageBox.warning(self, "오류", "캐시 파일이 없습니다. 데이터를 먼저 받아오세요.")
+            return
+
+        self.setWindowTitle("Binance Futures BTC - WaveTrend 라벨링 중...")
+        QApplication.processEvents()
+
+        try:
+            df = pd.read_csv(cache_file)
+            
+            wt1, wt2 = self.calculate_wavetrend(df, ch_len, avg_len)
+            
+            labels = np.where(wt1 > wt2, 1, -1)
+            labels[np.isnan(wt1) | np.isnan(wt2)] = 0
+            
+            df['ls_label'] = labels
+            df.to_csv(cache_file, index=False)
+
+            QMessageBox.information(self, "라벨링 완료",
+                                    f"WaveTrend 기준으로 "
+                                    f"LS 라벨 갱신 완료\n"
+                                    f"Long: {(labels==1).sum()}개, Short: {(labels==-1).sum()}개")
+
+            if hasattr(self, 'last_start_ms') and hasattr(self, 'last_end_ms'):
+                self.download_data(self.last_start_ms, self.last_end_ms, self.current_timeframe)
+
+        except Exception as e:
+            QMessageBox.critical(self, "오류", f"라벨링 중 오류 발생: {str(e)}")
+        finally:
+            self.setWindowTitle("Binance Futures BTC OHLCV Downloader")
+
+    def open_mtf_macd_dialog(self):
+        dialog = MtfMacdDialog(self, current_tf=self.current_timeframe)
+        if dialog.exec():
+            tf_key, fast_len, slow_len, sig_len, use_ls = dialog.get_settings()
+            setting = (tf_key, fast_len, slow_len, sig_len)
+            if setting not in self.mtf_macd_settings:
+                self.mtf_macd_settings.append(setting)
+            
+            if use_ls:
+                self.apply_mtf_macd_ls_labeling(tf_key, fast_len, slow_len, sig_len)
+            else:
+                if hasattr(self, 'current_df') and not self.current_df.empty:
+                    self.populate_ui(self.current_df)
+
+    def apply_mtf_macd_ls_labeling(self, tf_key, fast_len, slow_len, sig_len):
+        import os
+        cache_file = TIMEFRAME_CONFIG[self.current_timeframe]['cache']
+        target_cache_file = TIMEFRAME_CONFIG[tf_key]['cache']
+        
+        if not os.path.exists(cache_file):
+            QMessageBox.warning(self, "오류", "현재 타임프레임의 캐시 파일이 없습니다.")
+            return
+        if not os.path.exists(target_cache_file):
+            QMessageBox.warning(self, "오류", f"대상 타임프레임({tf_key})의 캐시 파일이 없습니다. 먼저 해당 데이터를 받아오세요.")
+            return
+
+        self.setWindowTitle(f"Binance Futures BTC - MTF MACD({tf_key}) 라벨링 중...")
+        QApplication.processEvents()
+
+        try:
+            df_curr = pd.read_csv(cache_file)
+            df_target = pd.read_csv(target_cache_file)
+            
+            macd_line, sig_line, _ = self.calculate_macd(df_target['close'], fast_len, slow_len, sig_len)
+            df_target['mtf_macd'] = macd_line
+            df_target['mtf_sig'] = sig_line
+            
+            df_curr_sorted = df_curr.sort_values('timestamp')
+            df_target_sorted = df_target[['timestamp', 'mtf_macd', 'mtf_sig']].sort_values('timestamp')
+            
+            merged = pd.merge_asof(
+                df_curr_sorted,
+                df_target_sorted,
+                on='timestamp',
+                direction='backward'
+            )
+            
+            labels = np.where(merged['mtf_macd'] > merged['mtf_sig'], 1, -1)
+            labels[merged['mtf_macd'].isna() | merged['mtf_sig'].isna()] = 0
+            
+            df_curr['ls_label'] = labels
+            df_curr.to_csv(cache_file, index=False)
+
+            QMessageBox.information(self, "라벨링 완료",
+                                    f"MTF MACD({tf_key}, {fast_len}/{slow_len}/{sig_len}) 기준으로 "
+                                    f"LS 라벨 갱신 완료\n"
+                                    f"Long: {(labels==1).sum()}개, Short: {(labels==-1).sum()}개")
+
+            if hasattr(self, 'last_start_ms') and hasattr(self, 'last_end_ms'):
+                self.download_data(self.last_start_ms, self.last_end_ms, self.current_timeframe)
+
+        except Exception as e:
+            QMessageBox.critical(self, "오류", f"라벨링 중 오류 발생: {str(e)}")
+        finally:
+            self.setWindowTitle("Binance Futures BTC OHLCV Downloader")
+
+    def calculate_wma(self, series, length):
+        if len(series) < length:
+            return pd.Series(np.nan, index=series.index)
+        weights = np.arange(1, length + 1)
+        return series.rolling(length).apply(lambda x: np.dot(x, weights) / weights.sum(), raw=True)
+
+    def calculate_hma(self, series, length):
+        half_len = int(length / 2)
+        sqrt_len = int(np.sqrt(length))
+        wma_half = self.calculate_wma(series, half_len)
+        wma_full = self.calculate_wma(series, length)
+        raw_hma = 2 * wma_half - wma_full
+        hma = self.calculate_wma(raw_hma, sqrt_len)
+        return hma
+
+    def calculate_squeeze_momentum(self, df, bb_len, bb_mult, kc_len, kc_mult):
+        close = df['close']
+        high = df['high']
+        low = df['low']
+        
+        basis = close.rolling(bb_len).mean()
+        dev = bb_mult * close.rolling(bb_len).std()
+        upperBB = basis + dev
+        lowerBB = basis - dev
+        
+        ma = close.rolling(kc_len).mean()
+        tr = np.zeros(len(df))
+        tr[0] = high.iloc[0] - low.iloc[0]
+        high_vals = high.values
+        low_vals = low.values
+        close_vals = close.values
+        for i in range(1, len(df)):
+            tr[i] = max(high_vals[i] - low_vals[i],
+                        abs(high_vals[i] - close_vals[i - 1]),
+                        abs(low_vals[i] - close_vals[i - 1]))
+        tr_series = pd.Series(tr, index=df.index)
+        rangema = tr_series.rolling(kc_len).mean()
+        
+        upperKC = ma + rangema * kc_mult
+        lowerKC = ma - rangema * kc_mult
+        
+        sqzOn = (lowerBB > lowerKC) & (upperBB < upperKC)
+        sqzOff = (lowerBB < lowerKC) | (upperBB > upperKC)
+        
+        highest_high = high.rolling(kc_len).max()
+        lowest_low = low.rolling(kc_len).min()
+        avg = (highest_high + lowest_low) / 2.0 + ma
+        val_to_fit = close - avg / 2.0
+        
+        sqz_val = self.calculate_linreg(val_to_fit, kc_len)
+        
+        return sqz_val, sqzOn, sqzOff
+
+    def calculate_linreg(self, series, length):
+        if len(series) < length:
+            return pd.Series(np.nan, index=series.index)
+        x = np.arange(length)
+        x_mean = x.mean()
+        x_var = ((x - x_mean)**2).sum()
+        x_dev = x - x_mean
+        
+        def get_linreg_val(y):
+            y_mean = y.mean()
+            slope = np.dot(y - y_mean, x_dev) / x_var
+            return y_mean + slope * (length - 1) / 2
+            
+        return series.rolling(length).apply(get_linreg_val, raw=True)
+
+    def calculate_wavetrend(self, df, ch_len, avg_len):
+        ap = (df['high'] + df['low'] + df['close']) / 3.0
+        esa = ap.ewm(span=ch_len, adjust=False).mean()
+        d = (ap - esa).abs().ewm(span=ch_len, adjust=False).mean()
+        ci = (ap - esa) / (0.015 * d)
+        wt1 = ci.ewm(span=avg_len, adjust=False).mean()
+        wt2 = wt1.rolling(4).mean()
+        return wt1, wt2
+
+    def calculate_macd(self, series, fast_len, slow_len, sig_len):
+        ema_fast = series.ewm(span=fast_len, adjust=False).mean()
+        ema_slow = series.ewm(span=slow_len, adjust=False).mean()
+        macd_line = ema_fast - ema_slow
+        signal_line = macd_line.ewm(span=sig_len, adjust=False).mean()
+        hist = macd_line - signal_line
+        return macd_line, signal_line, hist
+
+    def get_mtf_macd_for_df(self, plot_df, tf_key, fast_len, slow_len, sig_len):
+        import os
+        target_cache_file = TIMEFRAME_CONFIG[tf_key]['cache']
+        if not os.path.exists(target_cache_file):
+            return None, None, None
+            
+        df_target = pd.read_csv(target_cache_file)
+        if df_target.empty:
+            return None, None, None
+            
+        macd_line, sig_line, hist = self.calculate_macd(df_target['close'], fast_len, slow_len, sig_len)
+        df_target['mtf_macd'] = macd_line
+        df_target['mtf_sig'] = sig_line
+        df_target['mtf_hist'] = hist
+        
+        df_target['timestamp_dt'] = pd.to_datetime(df_target['timestamp'], unit='ms') + pd.Timedelta(hours=9)
+        
+        temp_df = plot_df.copy().reset_index()
+        temp_df_sorted = temp_df.sort_values('timestamp')
+        df_target_sorted = df_target[['timestamp_dt', 'mtf_macd', 'mtf_sig', 'mtf_hist']].sort_values('timestamp_dt')
+        
+        merged = pd.merge_asof(
+            temp_df_sorted,
+            df_target_sorted,
+            left_on='timestamp',
+            right_on='timestamp_dt',
+            direction='backward'
+        )
+        merged.set_index('timestamp', inplace=True)
+        return merged['mtf_macd'], merged['mtf_sig'], merged['mtf_hist']
 
     def open_ma_slope_dialog(self):
         dialog = MASlopeDialog(self)
@@ -637,10 +1212,18 @@ class BinanceDataFetcher(QMainWindow):
         return supertrend, direction
 
     def clear_indicators(self):
-        if self.sma_periods or self.supertrend_settings or self.ma_slope_settings:
+        if (self.sma_periods or self.supertrend_settings or self.ma_slope_settings or
+            self.hull_suite_settings or self.squeeze_settings or self.wavetrend_settings or
+            self.mtf_macd_settings):
+            
             self.sma_periods.clear()
             self.supertrend_settings.clear()
             self.ma_slope_settings.clear()
+            self.hull_suite_settings.clear()
+            self.squeeze_settings.clear()
+            self.wavetrend_settings.clear()
+            self.mtf_macd_settings.clear()
+            
             if hasattr(self, 'current_df') and not self.current_df.empty:
                 self.populate_ui(self.current_df)
             QMessageBox.information(self, "지표 초기화", "추가된 모든 지표가 차트에서 제거되었습니다.")
@@ -662,7 +1245,7 @@ class BinanceDataFetcher(QMainWindow):
             self.apply_labeling(target_profit, stop_loss)
 
     def apply_labeling(self, target_profit_pct, stop_loss_pct):
-        cache_file = 'btc_usdt_1m_cache.csv'
+        cache_file = TIMEFRAME_CONFIG[self.current_timeframe]['cache']
         import os
         
         if not os.path.exists(cache_file):
@@ -757,7 +1340,7 @@ class BinanceDataFetcher(QMainWindow):
             
             # 기존 화면에 표시 중이던 기간이 있다면 그 구간을 다시 새로고침하여 표 갱신
             if hasattr(self, 'last_start_ms') and hasattr(self, 'last_end_ms'):
-                self.download_data(self.last_start_ms, self.last_end_ms)
+                self.download_data(self.last_start_ms, self.last_end_ms, self.current_timeframe)
                 
         except Exception as e:
             QMessageBox.critical(self, "오류", f"라벨링 중 예기치 않은 오류 발생: {str(e)}")
@@ -786,7 +1369,7 @@ class BinanceDataFetcher(QMainWindow):
 
             # 규칙 2~6: 봉 단위 가상 거래 시뮬레이션
             for i in range(total_rows):
-                label      = int(df.iloc[i]['ls_label'])
+                label      = int(df.iloc[i - 1]['ls_label']) if i > 0 else 0
                 open_price = float(df.iloc[i]['open'])
 
                 # 규칙 5-4: 현재 포지션과 다른 label이 나타나면 청산만 수행
@@ -820,7 +1403,7 @@ class BinanceDataFetcher(QMainWindow):
                 df.at[i, 'capital'] = balance
 
             # 3. 결과 저장 (캐시 파일 업데이트)
-            cache_file = 'btc_usdt_1m_cache.csv'
+            cache_file = TIMEFRAME_CONFIG[self.current_timeframe]['cache']
             if os.path.exists(cache_file):
                 full_cache = pd.read_csv(cache_file)
                 # 현재 표시된 구간의 데이터만 업데이트 (Timestamp 기준)
@@ -869,12 +1452,14 @@ class BinanceDataFetcher(QMainWindow):
             start_str = self.current_df['timestamp'].iloc[0].strftime('%Y-%m-%d %H:%M:%S')
             end_str = self.current_df['timestamp'].iloc[-1].strftime('%Y-%m-%d %H:%M:%S')
             
-        # 메뉴에서 데이터 다운로드를 클릭했을 때 뜨는 작은 창(Dialog)에 현재 시간을 전달
-        dialog = DownloadDialog(self, start_str=start_str, end_str=end_str)
+        # 메뉴에서 데이터 다운로드를 클릭했을 때 뜨는 작은 창(Dialog)에 현재 시간 및 타임프레임 전달
+        dialog = DownloadDialog(self, start_str=start_str, end_str=end_str,
+                                timeframe=self.current_timeframe)
         if dialog.exec():
-            # 다이얼로그에서 설정한 시간을 바탕으로 다운로드 함수 호출
-            start_ms, end_ms = dialog.get_dates()
-            self.download_data(start_ms, end_ms)
+            # 다이얼로그에서 설정한 시간/타임프레임을 바탕으로 다운로드 함수 호출
+            start_ms, end_ms, tf_key = dialog.get_dates()
+            self.current_timeframe = tf_key
+            self.download_data(start_ms, end_ms, tf_key)
             
     def setup_views(self):
         # Create Vertical Splitter
@@ -915,7 +1500,15 @@ class BinanceDataFetcher(QMainWindow):
         # Set Default Splitter Ratio (e.g., 60% chart, 40% table)
         self.splitter.setSizes([500, 300])
         
-    def download_data(self, start_ms=None, end_ms=None):
+    def download_data(self, start_ms=None, end_ms=None, timeframe=None):
+        if timeframe is None:
+            timeframe = self.current_timeframe
+
+        tf_cfg = TIMEFRAME_CONFIG[timeframe]
+        tf_ms   = tf_cfg['ms']       # 한 캔들의 ms 간격
+        tf_ccxt = tf_cfg['ccxt']     # ccxt용 문자열
+        cache_file = tf_cfg['cache'] # 타임프레임별 캐시 파일
+
         if start_ms is None or end_ms is None:
             # 기본 설정값 (프로그램 최초 실행 시 자동 다운로드용)
             start_ms = QDateTime.fromString("2025-07-22 00:00:00", "yyyy-MM-dd HH:mm:ss").toMSecsSinceEpoch()
@@ -928,6 +1521,7 @@ class BinanceDataFetcher(QMainWindow):
         # UI를 새로고침(또는 라벨링 후 갱신)할 때 기존 구간을 재사용하기 위해 저장
         self.last_start_ms = start_ms
         self.last_end_ms = end_ms
+        self.current_timeframe = timeframe
             
         # UI 업데이트 강제 (모달 창 처리)
         QApplication.processEvents() 
@@ -935,9 +1529,7 @@ class BinanceDataFetcher(QMainWindow):
         try:
             exchange = ccxt.binance({'options': {'defaultType': 'future'}})
             symbol = 'BTC/USDT'
-            timeframe = '1m'
             limit = 1500
-            cache_file = 'btc_usdt_1m_cache.csv'
             
             import os
             if os.path.exists(cache_file):
@@ -952,8 +1544,8 @@ class BinanceDataFetcher(QMainWindow):
             # 다운로드해야 할 구간 (Intervals) 선별: 빠진 구간(Hole) 찾기 알고리즘
             fetch_intervals = []
             
-            # 요청한 시간 범위에서 있어야 할 1분(60000ms) 단위 전체 타임스탬프 집합
-            expected_ts = set(range(start_ms, end_ms, 60000))
+            # 요청한 시간 범위에서 있어야 할 타임프레임 단위 전체 타임스탬프 집합
+            expected_ts = set(range(start_ms, end_ms, tf_ms))
             if not df_cache.empty:
                 existing_ts = set(df_cache['timestamp'])
                 # 로컬 캐시에 존재하지 않는 타임스탬프만 필터링하여 정렬
@@ -966,10 +1558,10 @@ class BinanceDataFetcher(QMainWindow):
                 # 누락된 타임스탬프들을 연속된 구간(Interval)으로 그룹화
                 s_idx = 0
                 for i in range(1, len(missing_ts) + 1):
-                    # 다음 인덱스가 배열 끝이거나, 이전 시간과의 차이가 60000ms를 초과(연속되지 않음)하는 경우 끊습니다.
-                    if i == len(missing_ts) or missing_ts[i] - missing_ts[i-1] > 60000:
+                    # 다음 인덱스가 배열 끝이거나, 간격이 한 캔들을 초과(연속되지 않음)하는 경우 끊습니다.
+                    if i == len(missing_ts) or missing_ts[i] - missing_ts[i-1] > tf_ms:
                         f_start = missing_ts[s_idx]
-                        f_end = missing_ts[i-1] + 60000
+                        f_end = missing_ts[i-1] + tf_ms
                         fetch_intervals.append((f_start, f_end))
                         s_idx = i
             
@@ -978,7 +1570,7 @@ class BinanceDataFetcher(QMainWindow):
                 current_start = f_start
                 while current_start < f_end:
                     try:
-                        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, since=current_start, limit=limit)
+                        ohlcv = exchange.fetch_ohlcv(symbol, tf_ccxt, since=current_start, limit=limit)
                         if not ohlcv:
                             break
                             
@@ -1061,16 +1653,57 @@ class BinanceDataFetcher(QMainWindow):
         for col in ['open', 'high', 'low', 'close', 'volume']:
             plot_df[col] = plot_df[col].astype(float)
             
-        # MA Slope 패널 여부에 따라 서브플롯 구성
+        # 활성화된 서브 차트 패널 조사
         has_slope = bool(self.ma_slope_settings)
+        has_sqz = bool(self.squeeze_settings)
+        has_wt = bool(self.wavetrend_settings)
+        has_macd = bool(self.mtf_macd_settings)
+        
+        total_panels = 1
+        height_ratios = [3]
         if has_slope:
-            from matplotlib.gridspec import GridSpec
-            gs = GridSpec(2, 1, figure=self.fig, height_ratios=[3, 1], hspace=0.08)
-            ax = self.fig.add_subplot(gs[0])
-            ax_slope = self.fig.add_subplot(gs[1], sharex=ax)
+            total_panels += 1
+            height_ratios.append(1)
+        if has_sqz:
+            total_panels += 1
+            height_ratios.append(1)
+        if has_wt:
+            total_panels += 1
+            height_ratios.append(1)
+        if has_macd:
+            total_panels += 1
+            height_ratios.append(1)
+            
+        from matplotlib.gridspec import GridSpec
+        gs = GridSpec(total_panels, 1, figure=self.fig, height_ratios=height_ratios, hspace=0.08)
+        
+        current_panel_idx = 0
+        ax = self.fig.add_subplot(gs[current_panel_idx])
+        current_panel_idx += 1
+        
+        if has_slope:
+            ax_slope = self.fig.add_subplot(gs[current_panel_idx], sharex=ax)
+            current_panel_idx += 1
         else:
-            ax = self.fig.add_subplot(111)
             ax_slope = None
+            
+        if has_sqz:
+            ax_sqz = self.fig.add_subplot(gs[current_panel_idx], sharex=ax)
+            current_panel_idx += 1
+        else:
+            ax_sqz = None
+            
+        if has_wt:
+            ax_wt = self.fig.add_subplot(gs[current_panel_idx], sharex=ax)
+            current_panel_idx += 1
+        else:
+            ax_wt = None
+            
+        if has_macd:
+            ax_macd = self.fig.add_subplot(gs[current_panel_idx], sharex=ax)
+            current_panel_idx += 1
+        else:
+            ax_macd = None
 
         # 한국인에게 친숙한 색상 (상승: 빨강, 하락: 파랑)
         mc = mpf.make_marketcolors(up='red', down='blue', edge='inherit', wick='inherit')
@@ -1108,6 +1741,20 @@ class BinanceDataFetcher(QMainWindow):
                     addplots.append(mpf.make_addplot(bear_series, type='line',
                                                      color=st_bear_colors[st_idx % 3], width=1.5, ax=ax))
 
+        # Hull Suite 렌더링 (상승: 초록, 하락: 빨강)
+        if hasattr(self, 'hull_suite_settings') and self.hull_suite_settings:
+            for length in self.hull_suite_settings:
+                hma = self.calculate_hma(plot_df['close'], length)
+                prev_hma = hma.shift(1)
+                hma_bull = np.where(hma > prev_hma, hma, np.nan)
+                hma_bear = np.where(hma < prev_hma, hma, np.nan)
+                if not np.isnan(hma_bull).all():
+                    addplots.append(mpf.make_addplot(pd.Series(hma_bull, index=plot_df.index), type='line',
+                                                     color='#00c853', width=2.0, ax=ax))
+                if not np.isnan(hma_bear).all():
+                    addplots.append(mpf.make_addplot(pd.Series(hma_bear, index=plot_df.index), type='line',
+                                                     color='#d50000', width=2.0, ax=ax))
+
         if hasattr(self, 'show_label_action') and self.show_label_action.isChecked() and 'ls_label' in plot_df.columns:
             offset = plot_df['close'] * 0.0005
             
@@ -1122,16 +1769,21 @@ class BinanceDataFetcher(QMainWindow):
                 addplots.append(mpf.make_addplot(short_arr, type='scatter', markersize=0.6, marker='v', color='blue', ax=ax))
                 
         # show_nontrading=True 설정으로 X축을 실제 datetime으로 사용하여 matplotlib 포매터 적용
+        tf_label = TIMEFRAME_CONFIG[self.current_timeframe]['label']
+        chart_title = f"BTC/USDT {tf_label} (Binance Futures)"
         if addplots:
-            mpf.plot(plot_df, type='candle', ax=ax, style=style, xrotation=0, show_nontrading=True, axtitle="BTC/USDT 1m (Binance Futures)", ylabel="Price (USDT)", addplot=addplots)
+            mpf.plot(plot_df, type='candle', ax=ax, style=style, xrotation=0, show_nontrading=True, axtitle=chart_title, ylabel="Price (USDT)", addplot=addplots)
         else:
-            mpf.plot(plot_df, type='candle', ax=ax, style=style, xrotation=0, show_nontrading=True, axtitle="BTC/USDT 1m (Binance Futures)", ylabel="Price (USDT)")
+            mpf.plot(plot_df, type='candle', ax=ax, style=style, xrotation=0, show_nontrading=True, axtitle=chart_title, ylabel="Price (USDT)")
+
+        x_nums = mdates.date2num(plot_df.index.to_pydatetime())
+        # bar_width 계산
+        bar_width = 0.6 * np.diff(x_nums).mean() if len(x_nums) > 1 else 0.0005
 
         # MA Slope 패널 렌더링
         if ax_slope is not None:
             slope_line_colors = ['#2196f3', '#ff9800', '#9c27b0']
             ax_slope.axhline(y=0, color='#888888', linewidth=0.8, linestyle='-')
-            x_nums = mdates.date2num(plot_df.index.to_pydatetime())
             for idx, (ma_type, ma_period, lookback) in enumerate(self.ma_slope_settings):
                 if ma_type == 'EMA':
                     ma_series = plot_df['close'].ewm(span=ma_period, adjust=False).mean()
@@ -1151,41 +1803,120 @@ class BinanceDataFetcher(QMainWindow):
                                       color='#d50000', alpha=0.3, interpolate=True)
             ax_slope.set_ylabel('MA Slope', fontsize=8)
             ax_slope.legend(fontsize=7, loc='upper left')
-            ax_slope.grid(axis='y', linestyle='--', linewidth=0.4, alpha=0.6)
-        
+            ax_slope.grid(axis='both', linestyle='--', linewidth=0.4, alpha=0.6)
+
+        # Squeeze Momentum 패널 렌더링
+        if ax_sqz is not None:
+            for (bb_len, bb_mult, kc_len, kc_mult) in self.squeeze_settings:
+                sqz_val, sqzOn, sqzOff = self.calculate_squeeze_momentum(plot_df, bb_len, bb_mult, kc_len, kc_mult)
+                sqz_val_arr = sqz_val.values
+                colors = []
+                for i in range(len(sqz_val_arr)):
+                    val = sqz_val_arr[i]
+                    if np.isnan(val):
+                        colors.append('#888888')
+                        continue
+                    prev_val = sqz_val_arr[i-1] if i > 0 else 0
+                    if val > 0:
+                        colors.append('#26a69a' if val > prev_val else '#b2dfdb')
+                    else:
+                        colors.append('#ef5350' if val < prev_val else '#ffcdd2')
+                
+                ax_sqz.bar(x_nums, sqz_val_arr, width=bar_width, color=colors, align='center', alpha=0.8)
+                
+                dot_y = np.zeros(len(sqz_val_arr))
+                ax_sqz.scatter(x_nums[sqzOn], dot_y[sqzOn], color='#ff1100', s=10, marker='o', label='Squeeze ON')
+                ax_sqz.scatter(x_nums[sqzOff], dot_y[sqzOff], color='#00e676', s=10, marker='o', label='Squeeze OFF')
+                
+                ax_sqz.axhline(y=0, color='#888888', linewidth=0.5)
+                ax_sqz.set_ylabel('Sqz Mom', fontsize=8)
+                ax_sqz.grid(axis='both', linestyle='--', linewidth=0.4, alpha=0.6)
+
+        # WaveTrend 패널 렌더링
+        if ax_wt is not None:
+            for (ch_len, avg_len, ob_level, os_level) in self.wavetrend_settings:
+                wt1, wt2 = self.calculate_wavetrend(plot_df, ch_len, avg_len)
+                ax_wt.plot(x_nums, wt1.values, color='#00e676', linewidth=1.2, label='WT1')
+                ax_wt.plot(x_nums, wt2.values, color='#ff3d00', linewidth=1.2, linestyle='--', label='WT2')
+                
+                ax_wt.axhline(y=ob_level, color='#ff1744', linestyle=':', linewidth=0.8, alpha=0.7)
+                ax_wt.axhline(y=os_level, color='#00e676', linestyle=':', linewidth=0.8, alpha=0.7)
+                ax_wt.axhline(y=0, color='#888888', linestyle='-', linewidth=0.5, alpha=0.5)
+                
+                valid = ~np.isnan(wt1.values) & ~np.isnan(wt2.values)
+                ax_wt.fill_between(x_nums, wt1.values, wt2.values, where=valid, color='#2196f3', alpha=0.15)
+                
+                ax_wt.set_ylabel('WaveTrend', fontsize=8)
+                ax_wt.legend(fontsize=7, loc='upper left')
+                ax_wt.grid(axis='both', linestyle='--', linewidth=0.4, alpha=0.6)
+
+        # MTF MACD 패널 렌더링
+        if ax_macd is not None:
+            for (tf_key, fast_len, slow_len, sig_len) in self.mtf_macd_settings:
+                mtf_macd, mtf_sig, mtf_hist = self.get_mtf_macd_for_df(plot_df, tf_key, fast_len, slow_len, sig_len)
+                if mtf_macd is None or mtf_macd.isna().all():
+                    continue
+                ax_macd.plot(x_nums, mtf_macd.values, color='#2196f3', linewidth=1.2, label=f'MACD ({tf_key})')
+                ax_macd.plot(x_nums, mtf_sig.values, color='#ff9800', linewidth=1.2, label=f'Signal ({tf_key})')
+                
+                hist_vals = mtf_hist.values
+                hist_colors = np.where(hist_vals >= 0, '#26a69a', '#ef5350')
+                ax_macd.bar(x_nums, hist_vals, width=bar_width, color=hist_colors, align='center', alpha=0.5)
+                
+                ax_macd.axhline(y=0, color='#888888', linewidth=0.5)
+                ax_macd.set_ylabel(f'MTF MACD ({tf_key})', fontsize=8)
+                ax_macd.legend(fontsize=7, loc='upper left')
+                ax_macd.grid(axis='both', linestyle='--', linewidth=0.4, alpha=0.6)
+
         # 사용자 맞춤형 X축 날짜/시간 포매터 정의
         import matplotlib.ticker as ticker
         class CustomDateFormatter(ticker.Formatter):
             def __call__(self, x, pos=0):
                 try:
                     dt = mdates.num2date(x)
-                    # 연도가 바뀔 때 (1월 1일 00:00)
                     if dt.month == 1 and dt.day == 1 and dt.hour == 0 and dt.minute == 0:
                         return f"$\\mathbf{{{dt.strftime('%Y')}}}$"
-                    # 달이 바뀔 때 (1일 00:00)
                     elif dt.day == 1 and dt.hour == 0 and dt.minute == 0:
                         month_names = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
                         return f"$\\mathbf{{{month_names[dt.month]}}}$"
-                    # 날짜가 바뀔 때 (00:00)
                     elif dt.hour == 0 and dt.minute == 0:
                         return f"$\\mathbf{{{dt.strftime('%d')}}}$"
-                    # 기본 표시 (시간)
                     else:
                         return dt.strftime('%H:%M')
                 except Exception:
                     return ""
-                    
-        ax.xaxis.set_major_locator(mdates.AutoDateLocator())
-        ax.xaxis.set_major_formatter(CustomDateFormatter())
-        ax.format_xdata = mdates.DateFormatter('%Y-%m-%d %H:%M')
 
-        # Slope 패널이 있으면 메인 차트 X축 라벨을 숨기고 slope 패널에 포매터 적용
+        # Collect all active sub-axes in order
+        sub_axes = []
         if ax_slope is not None:
-            import matplotlib.pyplot as plt
+            sub_axes.append(ax_slope)
+        if ax_sqz is not None:
+            sub_axes.append(ax_sqz)
+        if ax_wt is not None:
+            sub_axes.append(ax_wt)
+        if ax_macd is not None:
+            sub_axes.append(ax_macd)
+            
+        import matplotlib.pyplot as plt
+        
+        # Hide x ticks on main ax if we have any sub_axes
+        if sub_axes:
             plt.setp(ax.get_xticklabels(), visible=False)
-            ax_slope.xaxis.set_major_locator(mdates.AutoDateLocator())
-            ax_slope.xaxis.set_major_formatter(CustomDateFormatter())
-            ax_slope.format_xdata = mdates.DateFormatter('%Y-%m-%d %H:%M')
+            
+            # Hide x ticks on all sub_axes except the last one
+            for sub_ax in sub_axes[:-1]:
+                plt.setp(sub_ax.get_xticklabels(), visible=False)
+                
+            # The bottom-most axis gets the date formatting
+            bottom_ax = sub_axes[-1]
+            bottom_ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+            bottom_ax.xaxis.set_major_formatter(CustomDateFormatter())
+            bottom_ax.format_xdata = mdates.DateFormatter('%Y-%m-%d %H:%M')
+        else:
+            # If no subplots, format the main axis
+            ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+            ax.xaxis.set_major_formatter(CustomDateFormatter())
+            ax.format_xdata = mdates.DateFormatter('%Y-%m-%d %H:%M')
 
         self.update_marker_sizes(ax)
 
