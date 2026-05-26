@@ -909,12 +909,12 @@ class BinanceDataFetcher(QMainWindow):
                 self.wavetrend_settings.append(setting)
             
             if use_ls:
-                self.apply_wavetrend_ls_labeling(ch_len, avg_len)
+                self.apply_wavetrend_ls_labeling(ch_len, avg_len, ob_level, os_level)
             else:
                 if hasattr(self, 'current_df') and not self.current_df.empty:
                     self.populate_ui(self.current_df)
 
-    def apply_wavetrend_ls_labeling(self, ch_len, avg_len):
+    def apply_wavetrend_ls_labeling(self, ch_len, avg_len, ob_level, os_level):
         import os
         cache_file = TIMEFRAME_CONFIG[self.current_timeframe]['cache']
         if not os.path.exists(cache_file):
@@ -929,8 +929,26 @@ class BinanceDataFetcher(QMainWindow):
             
             wt1, wt2 = self.calculate_wavetrend(df, ch_len, avg_len)
             
-            labels = np.where(wt1 > wt2, 1, -1)
-            labels[np.isnan(wt1) | np.isnan(wt2)] = 0
+            prev_wt1 = wt1.shift(1)
+            prev_wt2 = wt2.shift(1)
+            
+            # 과매수/과매도 문턱값 적용 크로스오버 판별
+            cross_up = (prev_wt1 <= prev_wt2) & (wt1 > wt2) & (wt1 <= os_level)
+            cross_down = (prev_wt1 >= prev_wt2) & (wt1 < wt2) & (wt1 >= ob_level)
+            
+            # 이전 상태 유지를 위해 ffill() 활용
+            signal_series = pd.Series(0, index=df.index)
+            signal_series.loc[cross_up] = 1
+            signal_series.loc[cross_down] = -1
+            
+            # 계산 불가 구간 예외처리
+            signal_series.loc[wt1.isna() | wt2.isna()] = 0
+            
+            signal_series = signal_series.replace(0, np.nan)
+            if pd.isna(signal_series.iloc[0]):
+                signal_series.iloc[0] = 0
+                
+            labels = signal_series.ffill().fillna(0).astype(int).values
             
             df['ls_label'] = labels
             df.to_csv(cache_file, index=False)
@@ -1369,7 +1387,9 @@ class BinanceDataFetcher(QMainWindow):
 
             # 규칙 2~6: 봉 단위 가상 거래 시뮬레이션
             for i in range(total_rows):
-                label      = int(df.iloc[i - 1]['ls_label']) if i > 0 else 0
+                # label      = int(df.iloc[i - 1]['ls_label']) if i > 0 else 0
+                # 이게 이렇게 한 시간 단위만 미래 오염이 발생해도 수익이 어마어마한데...
+                label      = int(df.iloc[i]['ls_label']) if i > 0 else 0
                 open_price = float(df.iloc[i]['open'])
 
                 # 규칙 5-4: 현재 포지션과 다른 label이 나타나면 청산만 수행
