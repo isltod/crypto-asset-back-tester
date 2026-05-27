@@ -413,7 +413,7 @@ class WaveTrendDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("WaveTrend Oscillator 설정")
-        self.resize(320, 240)
+        self.resize(320, 280)
         
         layout = QVBoxLayout(self)
         
@@ -432,6 +432,14 @@ class WaveTrendDialog(QDialog):
         self.avg_len_spin.setValue(21)
         avg_len_layout.addWidget(self.avg_len_spin)
         layout.addLayout(avg_len_layout)
+        
+        wt2_len_layout = QHBoxLayout()
+        wt2_len_layout.addWidget(QLabel("WT2 평균 기간:"))
+        self.wt2_len_spin = QSpinBox()
+        self.wt2_len_spin.setRange(1, 400)
+        self.wt2_len_spin.setValue(4)
+        wt2_len_layout.addWidget(self.wt2_len_spin)
+        layout.addLayout(wt2_len_layout)
         
         ob_layout = QHBoxLayout()
         ob_layout.addWidget(QLabel("과매수 레벨 1:"))
@@ -457,7 +465,7 @@ class WaveTrendDialog(QDialog):
         layout.addWidget(self.action_btn)
         
     def get_settings(self):
-        return (self.ch_len_spin.value(), self.avg_len_spin.value(),
+        return (self.ch_len_spin.value(), self.avg_len_spin.value(), self.wt2_len_spin.value(),
                 self.ob_spin.value(), self.os_spin.value(),
                 self.ls_checkbox.isChecked())
 
@@ -903,18 +911,18 @@ class BinanceDataFetcher(QMainWindow):
     def open_wavetrend_dialog(self):
         dialog = WaveTrendDialog(self)
         if dialog.exec():
-            ch_len, avg_len, ob_level, os_level, use_ls = dialog.get_settings()
-            setting = (ch_len, avg_len, ob_level, os_level)
+            ch_len, avg_len, wt2_len, ob_level, os_level, use_ls = dialog.get_settings()
+            setting = (ch_len, avg_len, wt2_len, ob_level, os_level)
             if setting not in self.wavetrend_settings:
                 self.wavetrend_settings.append(setting)
             
             if use_ls:
-                self.apply_wavetrend_ls_labeling(ch_len, avg_len, ob_level, os_level)
+                self.apply_wavetrend_ls_labeling(ch_len, avg_len, wt2_len, ob_level, os_level)
             else:
                 if hasattr(self, 'current_df') and not self.current_df.empty:
                     self.populate_ui(self.current_df)
 
-    def apply_wavetrend_ls_labeling(self, ch_len, avg_len, ob_level, os_level):
+    def apply_wavetrend_ls_labeling(self, ch_len, avg_len, wt2_len, ob_level, os_level):
         import os
         cache_file = TIMEFRAME_CONFIG[self.current_timeframe]['cache']
         if not os.path.exists(cache_file):
@@ -927,7 +935,7 @@ class BinanceDataFetcher(QMainWindow):
         try:
             df = pd.read_csv(cache_file)
             
-            wt1, wt2 = self.calculate_wavetrend(df, ch_len, avg_len)
+            wt1, wt2 = self.calculate_wavetrend(df, ch_len, avg_len, wt2_len)
             
             prev_wt1 = wt1.shift(1)
             prev_wt2 = wt2.shift(1)
@@ -1100,13 +1108,13 @@ class BinanceDataFetcher(QMainWindow):
             
         return series.rolling(length).apply(get_linreg_val, raw=True)
 
-    def calculate_wavetrend(self, df, ch_len, avg_len):
+    def calculate_wavetrend(self, df, ch_len, avg_len, wt2_len):
         ap = (df['high'] + df['low'] + df['close']) / 3.0
         esa = ap.ewm(span=ch_len, adjust=False).mean()
         d = (ap - esa).abs().ewm(span=ch_len, adjust=False).mean()
         ci = (ap - esa) / (0.015 * d)
         wt1 = ci.ewm(span=avg_len, adjust=False).mean()
-        wt2 = wt1.rolling(4).mean()
+        wt2 = wt1.rolling(wt2_len).mean()
         return wt1, wt2
 
     def calculate_macd(self, series, fast_len, slow_len, sig_len):
@@ -1854,8 +1862,8 @@ class BinanceDataFetcher(QMainWindow):
 
         # WaveTrend 패널 렌더링
         if ax_wt is not None:
-            for (ch_len, avg_len, ob_level, os_level) in self.wavetrend_settings:
-                wt1, wt2 = self.calculate_wavetrend(plot_df, ch_len, avg_len)
+            for (ch_len, avg_len, wt2_len, ob_level, os_level) in self.wavetrend_settings:
+                wt1, wt2 = self.calculate_wavetrend(plot_df, ch_len, avg_len, wt2_len)
                 ax_wt.plot(x_nums, wt1.values, color='#00e676', linewidth=1.2, label='WT1')
                 ax_wt.plot(x_nums, wt2.values, color='#ff3d00', linewidth=1.2, linestyle='--', label='WT2')
                 
