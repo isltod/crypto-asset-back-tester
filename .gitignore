@@ -2,6 +2,7 @@
 # AI train
 ptb.*.*
 *.csv
+*.pth
 
 # Windows <-> Linux Problem
 *:Zone.Identifier

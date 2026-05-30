@@ -592,6 +592,11 @@ class BinanceDataFetcher(QMainWindow):
         labeling_action.triggered.connect(self.open_labeling_dialog)
         data_menu.addAction(labeling_action)
         
+        # '딥러닝 예측 라벨링...' 액션 추가
+        dl_label_action = QAction("딥러닝 예측 라벨링...", self)
+        dl_label_action.triggered.connect(self.apply_deep_learning_labeling)
+        data_menu.addAction(dl_label_action)
+        
         # '라벨 차트 표시' 액션 (토글형) 추가
         self.show_label_action = QAction("라벨 차트 표시", self)
         self.show_label_action.setCheckable(True)
@@ -1374,6 +1379,143 @@ class BinanceDataFetcher(QMainWindow):
         finally:
             self.setWindowTitle("Binance Futures BTC OHLCV Downloader")
             self.progress_bar.setVisible(False)
+            self.statusBar.clearMessage()
+
+    def apply_deep_learning_labeling(self):
+        import os
+        import json
+        import torch
+        import numpy as np
+        import pandas as pd
+        
+        model_path = 'trading_model.pth'
+        scaler_path = 'scaler_config.json'
+        cache_file = TIMEFRAME_CONFIG[self.current_timeframe]['cache']
+        
+        if not os.path.exists(model_path) or not os.path.exists(scaler_path):
+            QMessageBox.warning(self, "오류", "학습된 모델 파일(trading_model.pth) 또는 스케일러 설정(scaler_config.json)을 찾을 수 없습니다.\n먼저 터미널에서 'python train.py'를 실행하여 모델을 학습시켜 주세요.")
+            return
+            
+        if not os.path.exists(cache_file):
+            QMessageBox.warning(self, "오류", "현재 타임프레임의 캐시 파일이 없습니다. 데이터를 먼저 다운로드하세요.")
+            return
+            
+        self.setWindowTitle("Binance Futures BTC - 딥러닝 예측 중...")
+        self.statusBar.showMessage("딥러닝 모델 예측 연산 중...")
+        QApplication.processEvents()
+        
+        def calculate_rsi(series, period=14):
+            delta = series.diff()
+            gain = delta.clip(lower=0)
+            loss = -delta.clip(upper=0)
+            avg_gain = gain.ewm(alpha=1/period, adjust=False).mean()
+            avg_loss = loss.ewm(alpha=1/period, adjust=False).mean()
+            rs = avg_gain / (avg_loss + 1e-9)
+            return 100 - (100 / (1 + rs))
+
+        def calculate_atr(df_in, period=14):
+            high = df_in['high']
+            low = df_in['low']
+            close = df_in['close']
+            prev_close = close.shift(1)
+            tr = pd.concat([
+                high - low,
+                (high - prev_close).abs(),
+                (low - prev_close).abs()
+            ], axis=1).max(axis=1)
+            return tr.ewm(alpha=1/period, adjust=False).mean()
+            
+        try:
+            # 1. 스케일러 설정 로드
+            with open(scaler_path, 'r', encoding='utf-8') as f:
+                scaler_config = json.load(f)
+            mean = np.array(scaler_config['mean'])
+            std = np.array(scaler_config['std'])
+            feature_cols = scaler_config['feature_cols']
+            
+            # 2. 데이터 로드 및 피처 계산
+            df = pd.read_csv(cache_file)
+            df = df.sort_values('timestamp').reset_index(drop=True)
+            
+            df_feats = df.copy()
+            df_feats['close_prev'] = df_feats['close'].shift(1)
+            df_feats['open_pct'] = (df_feats['open'] / df_feats['close_prev']) - 1.0
+            df_feats['high_pct'] = (df_feats['high'] / df_feats['close_prev']) - 1.0
+            df_feats['low_pct'] = (df_feats['low'] / df_feats['close_prev']) - 1.0
+            df_feats['close_pct'] = (df_feats['close'] / df_feats['close_prev']) - 1.0
+            
+            for p in [20, 50, 100]:
+                df_feats[f'sma_{p}_ratio'] = (df_feats['close'] / df_feats['close'].rolling(p).mean()) - 1.0
+                
+            df_feats['rsi_14'] = calculate_rsi(df_feats['close'], 14) / 100.0 - 0.5
+            
+            macd_val, macd_sig, macd_hist = self.calculate_macd(df_feats['close'], 12, 26, 9)
+            df_feats['macd_ratio'] = macd_val / df_feats['close']
+            df_feats['macd_sig_ratio'] = macd_sig / df_feats['close']
+            df_feats['macd_hist_ratio'] = macd_hist / df_feats['close']
+            
+            df_feats['atr_ratio'] = calculate_atr(df_feats, 14) / df_feats['close']
+            df_feats['vol_ratio'] = (df_feats['volume'] / (df_feats['volume'].rolling(20).mean() + 1e-9)) - 1.0
+            
+            # 3. 피처 정형화 및 슬라이딩 윈도우 구성
+            features = df_feats[feature_cols].values
+            seq_len = 60
+            labels = np.zeros(len(df), dtype=int)
+            
+            nan_mask = np.isnan(features).any(axis=1)
+            first_valid_idx = np.where(~nan_mask)[0][0] if not nan_mask.all() else len(df)
+            start_idx = max(first_valid_idx + seq_len, seq_len)
+            
+            if start_idx < len(df):
+                X_list = []
+                for i in range(start_idx, len(df)):
+                    window = features[i - seq_len : i]
+                    window_scaled = (window - mean) / std
+                    X_list.append(window_scaled)
+                X_batch = np.array(X_list)
+                
+                # 4. PyTorch 모델 추론
+                from train import TradingCNNLSTM
+                device = 'cuda' if torch.cuda.is_available() else 'cpu'
+                
+                model = TradingCNNLSTM(input_dim=len(feature_cols), hidden_dim=64, num_classes=3)
+                model.load_state_dict(torch.load(model_path, map_location=device))
+                model = model.to(device)
+                model.eval()
+                
+                X_tensor = torch.FloatTensor(X_batch).to(device)
+                
+                preds_all = []
+                batch_size = 256
+                with torch.no_grad():
+                    for offset in range(0, len(X_tensor), batch_size):
+                        batch_x = X_tensor[offset : offset + batch_size]
+                        outputs = model(batch_x)
+                        _, predicted = outputs.max(1)
+                        preds_all.extend(predicted.cpu().numpy())
+                        
+                # 예측 라벨 맵핑 (0, 1, 2 -> -1, 0, 1)
+                preds_mapped = np.array(preds_all) - 1
+                labels[start_idx:] = preds_mapped
+                
+            df['ls_label'] = labels
+            df.to_csv(cache_file, index=False)
+            
+            long_count = (labels == 1).sum()
+            short_count = (labels == -1).sum()
+            
+            QMessageBox.information(self, "예측 완료", 
+                                    f"딥러닝 예측 라벨링 완료!\n"
+                                    f"Long: {long_count}개, Short: {short_count}개\n"
+                                    f"(최초 {start_idx}개 데이터는 과거 데이터 부족으로 0으로 설정되었습니다.)")
+                                    
+            if hasattr(self, 'last_start_ms') and hasattr(self, 'last_end_ms'):
+                self.download_data(self.last_start_ms, self.last_end_ms, self.current_timeframe)
+                
+        except Exception as e:
+            QMessageBox.critical(self, "오류", f"딥러닝 모델 예측 중 오류 발생: {str(e)}")
+        finally:
+            self.setWindowTitle("Binance Futures BTC OHLCV Downloader")
             self.statusBar.clearMessage()
 
     def run_backtest(self):
