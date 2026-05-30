@@ -3,3 +3,5 @@ pandas
 PySide6
 matplotlib
 mplfinance
+torch
+scikit-learn
