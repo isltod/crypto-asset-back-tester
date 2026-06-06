@@ -12,13 +12,15 @@ from PySide6.QtGui import QAction
 # 타임프레임별 설정 상수
 TIMEFRAME_CONFIG = {
     '1m':  {'label': '1분',  'ms': 60_000,        'ccxt': '1m',  'cache': 'btc_usdt_1m_cache.csv'},
+    '3m':  {'label': '3분',  'ms': 180_000,       'ccxt': '3m',  'cache': 'btc_usdt_3m_cache.csv'},
     '5m':  {'label': '5분',  'ms': 300_000,       'ccxt': '5m',  'cache': 'btc_usdt_5m_cache.csv'},
+    '15m': {'label': '15분', 'ms': 900_000,       'ccxt': '15m', 'cache': 'btc_usdt_15m_cache.csv'},
     '30m': {'label': '30분', 'ms': 1_800_000,     'ccxt': '30m', 'cache': 'btc_usdt_30m_cache.csv'},
     '1h':  {'label': '1시간','ms': 3_600_000,     'ccxt': '1h',  'cache': 'btc_usdt_1h_cache.csv'},
     '4h':  {'label': '4시간','ms': 14_400_000,    'ccxt': '4h',  'cache': 'btc_usdt_4h_cache.csv'},
     '1d':  {'label': '1일',  'ms': 86_400_000,    'ccxt': '1d',  'cache': 'btc_usdt_1d_cache.csv'},
 }
-TIMEFRAME_KEYS = ['1m', '5m', '30m', '1h', '4h', '1d']
+TIMEFRAME_KEYS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d']
 
 class DownloadDialog(QDialog):
     def __init__(self, parent=None, start_str=None, end_str=None, timeframe='1m'):
@@ -413,7 +415,7 @@ class WaveTrendDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("WaveTrend Oscillator 설정")
-        self.resize(320, 280)
+        self.resize(320, 310)
         
         layout = QVBoxLayout(self)
         
@@ -456,6 +458,14 @@ class WaveTrendDialog(QDialog):
         self.os_spin.setValue(-60)
         os_layout.addWidget(self.os_spin)
         layout.addLayout(os_layout)
+
+        cum_layout = QHBoxLayout()
+        cum_layout.addWidget(QLabel("크로스 누적 횟수:"))
+        self.cum_spin = QSpinBox()
+        self.cum_spin.setRange(1, 10)
+        self.cum_spin.setValue(1)
+        cum_layout.addWidget(self.cum_spin)
+        layout.addLayout(cum_layout)
         
         self.ls_checkbox = QCheckBox("LS 라벨링 적용")
         layout.addWidget(self.ls_checkbox)
@@ -466,7 +476,7 @@ class WaveTrendDialog(QDialog):
         
     def get_settings(self):
         return (self.ch_len_spin.value(), self.avg_len_spin.value(), self.wt2_len_spin.value(),
-                self.ob_spin.value(), self.os_spin.value(),
+                self.ob_spin.value(), self.os_spin.value(), self.cum_spin.value(),
                 self.ls_checkbox.isChecked())
 
 
@@ -916,18 +926,18 @@ class BinanceDataFetcher(QMainWindow):
     def open_wavetrend_dialog(self):
         dialog = WaveTrendDialog(self)
         if dialog.exec():
-            ch_len, avg_len, wt2_len, ob_level, os_level, use_ls = dialog.get_settings()
-            setting = (ch_len, avg_len, wt2_len, ob_level, os_level)
+            ch_len, avg_len, wt2_len, ob_level, os_level, cross_count, use_ls = dialog.get_settings()
+            setting = (ch_len, avg_len, wt2_len, ob_level, os_level, cross_count)
             if setting not in self.wavetrend_settings:
                 self.wavetrend_settings.append(setting)
             
             if use_ls:
-                self.apply_wavetrend_ls_labeling(ch_len, avg_len, wt2_len, ob_level, os_level)
+                self.apply_wavetrend_ls_labeling(ch_len, avg_len, wt2_len, ob_level, os_level, cross_count)
             else:
                 if hasattr(self, 'current_df') and not self.current_df.empty:
                     self.populate_ui(self.current_df)
 
-    def apply_wavetrend_ls_labeling(self, ch_len, avg_len, wt2_len, ob_level, os_level):
+    def apply_wavetrend_ls_labeling(self, ch_len, avg_len, wt2_len, ob_level, os_level, cross_count):
         import os
         cache_file = TIMEFRAME_CONFIG[self.current_timeframe]['cache']
         if not os.path.exists(cache_file):
@@ -949,19 +959,37 @@ class BinanceDataFetcher(QMainWindow):
             cross_up = (prev_wt1 <= prev_wt2) & (wt1 > wt2) & (wt1 <= os_level)
             cross_down = (prev_wt1 >= prev_wt2) & (wt1 < wt2) & (wt1 >= ob_level)
             
-            # 이전 상태 유지를 위해 ffill() 활용
-            signal_series = pd.Series(0, index=df.index)
-            signal_series.loc[cross_up] = 1
-            signal_series.loc[cross_down] = -1
+            # 동일 방향 크로스 누적 횟수 기반 포지션 결정 상태 머신
+            labels = np.zeros(len(df), dtype=int)
+            current_position = 0
+            long_signal_count = 0
+            short_signal_count = 0
             
-            # 계산 불가 구간 예외처리
-            signal_series.loc[wt1.isna() | wt2.isna()] = 0
+            cross_up_vals = cross_up.values
+            cross_down_vals = cross_down.values
+            wt1_nan = wt1.isna().values
+            wt2_nan = wt2.isna().values
             
-            signal_series = signal_series.replace(0, np.nan)
-            if pd.isna(signal_series.iloc[0]):
-                signal_series.iloc[0] = 0
-                
-            labels = signal_series.ffill().fillna(0).astype(int).values
+            for i in range(len(df)):
+                if wt1_nan[i] or wt2_nan[i]:
+                    labels[i] = 0
+                    continue
+                    
+                if cross_up_vals[i]:
+                    short_signal_count = 0  # 반대 방향 누적 리셋
+                    long_signal_count += 1
+                    if long_signal_count >= cross_count:
+                        current_position = 1
+                        long_signal_count = 0  # 포지션 진입 후 카운트 리셋
+                        
+                elif cross_down_vals[i]:
+                    long_signal_count = 0   # 반대 방향 누적 리셋
+                    short_signal_count += 1
+                    if short_signal_count >= cross_count:
+                        current_position = -1
+                        short_signal_count = 0 # 포지션 진입 후 카운트 리셋
+                        
+                labels[i] = current_position
             
             df['ls_label'] = labels
             df.to_csv(cache_file, index=False)
@@ -986,6 +1014,35 @@ class BinanceDataFetcher(QMainWindow):
             setting = (tf_key, fast_len, slow_len, sig_len)
             if setting not in self.mtf_macd_settings:
                 self.mtf_macd_settings.append(setting)
+            
+            # 대상 시간틀 데이터 자동 다운로드 및 캐시
+            cache_file = TIMEFRAME_CONFIG[self.current_timeframe]['cache']
+            import os
+            start_ms = getattr(self, 'last_start_ms', None)
+            end_ms = getattr(self, 'last_end_ms', None)
+            
+            if start_ms is None or end_ms is None:
+                if os.path.exists(cache_file):
+                    df_curr = pd.read_csv(cache_file)
+                    if not df_curr.empty:
+                        start_ms = int(df_curr['timestamp'].min())
+                        end_ms = int(df_curr['timestamp'].max())
+            
+            if start_ms is not None and end_ms is not None:
+                # EMA 웜업용 기간 확보 (slow_len + sig_len) * 4 봉
+                warmup_bars = (slow_len + sig_len) * 4
+                target_ms = TIMEFRAME_CONFIG[tf_key]['ms']
+                start_download_ms = start_ms - (target_ms * warmup_bars)
+                end_download_ms = end_ms
+                
+                # 안내 타이틀 표시
+                self.setWindowTitle(f"Binance Futures BTC - 대상 시간틀({tf_key}) 데이터 확인/다운로드 중...")
+                QApplication.processEvents()
+                
+                self.download_data(start_download_ms, end_download_ms, timeframe=tf_key, quiet=True)
+                
+                self.setWindowTitle("Binance Futures BTC OHLCV Downloader")
+                QApplication.processEvents()
             
             if use_ls:
                 self.apply_mtf_macd_ls_labeling(tf_key, fast_len, slow_len, sig_len)
@@ -1537,9 +1594,9 @@ class BinanceDataFetcher(QMainWindow):
 
             # 규칙 2~6: 봉 단위 가상 거래 시뮬레이션
             for i in range(total_rows):
-                # label      = int(df.iloc[i - 1]['ls_label']) if i > 0 else 0
+                label      = int(df.iloc[i - 1]['ls_label']) if i > 0 else 0
                 # 이게 이렇게 한 시간 단위만 미래 오염이 발생해도 수익이 어마어마한데...
-                label      = int(df.iloc[i]['ls_label']) if i > 0 else 0
+                # label      = int(df.iloc[i]['ls_label']) if i > 0 else 0
                 open_price = float(df.iloc[i]['open'])
 
                 # 규칙 5-4: 현재 포지션과 다른 label이 나타나면 청산만 수행
@@ -1670,7 +1727,7 @@ class BinanceDataFetcher(QMainWindow):
         # Set Default Splitter Ratio (e.g., 60% chart, 40% table)
         self.splitter.setSizes([500, 300])
         
-    def download_data(self, start_ms=None, end_ms=None, timeframe=None):
+    def download_data(self, start_ms=None, end_ms=None, timeframe=None, quiet=False):
         if timeframe is None:
             timeframe = self.current_timeframe
 
@@ -1685,13 +1742,15 @@ class BinanceDataFetcher(QMainWindow):
             end_ms = QDateTime.fromString("2025-07-23 23:59:00", "yyyy-MM-dd HH:mm:ss").toMSecsSinceEpoch()
             
         if start_ms >= end_ms:
-            QMessageBox.warning(self, "잘못된 입력", "시작 시간은 종료 시간보다 빨라야 합니다.")
-            return
+            if not quiet:
+                QMessageBox.warning(self, "잘못된 입력", "시작 시간은 종료 시간보다 빨라야 합니다.")
+            return False
             
-        # UI를 새로고침(또는 라벨링 후 갱신)할 때 기존 구간을 재사용하기 위해 저장
-        self.last_start_ms = start_ms
-        self.last_end_ms = end_ms
-        self.current_timeframe = timeframe
+        if not quiet:
+            # UI를 새로고침(또는 라벨링 후 갱신)할 때 기존 구간을 재사용하기 위해 저장
+            self.last_start_ms = start_ms
+            self.last_end_ms = end_ms
+            self.current_timeframe = timeframe
             
         # UI 업데이트 강제 (모달 창 처리)
         QApplication.processEvents() 
@@ -1756,7 +1815,10 @@ class BinanceDataFetcher(QMainWindow):
                             break
                         current_start = last_ts + 1
                     except Exception as e:
-                        QMessageBox.warning(self, "API 오류", f"데이터를 가져오는 중 오류가 발생했습니다: {str(e)}")
+                        if not quiet:
+                            QMessageBox.warning(self, "API 오류", f"데이터를 가져오는 중 오류가 발생했습니다: {str(e)}")
+                        else:
+                            print(f"Quiet download API error: {e}")
                         break
             
             # 새로 받은 데이터가 있으면 캐시에 병합
@@ -1775,17 +1837,34 @@ class BinanceDataFetcher(QMainWindow):
                 # 사용자가 요청한 범위에 해당하는 데이터만 추출하여 표시
                 display_df = df_cache[(df_cache['timestamp'] >= start_ms) & (df_cache['timestamp'] <= end_ms)].copy()
                 
-                if not display_df.empty:
-                    # 바이낸스 기본 시간은 세계 표준시(UTC)이므로, 대한민국 표준시(KST, UTC+9)로 변환
-                    display_df['timestamp'] = pd.to_datetime(display_df['timestamp'], unit='ms') + pd.Timedelta(hours=9)
-                    self.populate_ui(display_df)
-                else:
-                    QMessageBox.information(self, "데이터 없음", "선택한 기간 동안의 데이터가 없습니다.")
+                if not quiet:
+                    if not display_df.empty:
+                        # 바이낸스 기본 시간은 세계 표준시(UTC)이므로, 대한민국 표준시(KST, UTC+9)로 변환
+                        display_df['timestamp'] = pd.to_datetime(display_df['timestamp'], unit='ms') + pd.Timedelta(hours=9)
+                        self.populate_ui(display_df)
+                    else:
+                        QMessageBox.information(self, "데이터 없음", "선택한 기간 동안의 데이터가 없습니다.")
             else:
-                QMessageBox.information(self, "데이터 없음", "캐시가 비어있고 데이터를 받아오지 못했습니다.")
+                if not quiet:
+                    QMessageBox.information(self, "데이터 없음", "캐시가 비어있고 데이터를 받아오지 못했습니다.")
+                    
+            # 활성화된 다중 타임프레임 MACD 설정이 있다면 해당 대상 시간틀 데이터도 자동으로 받아두기
+            if not quiet and hasattr(self, 'mtf_macd_settings') and self.mtf_macd_settings:
+                for (tf_key, fast_len, slow_len, sig_len) in self.mtf_macd_settings:
+                    if tf_key != timeframe:
+                        warmup_bars = (slow_len + sig_len) * 4
+                        target_ms = TIMEFRAME_CONFIG[tf_key]['ms']
+                        start_download_ms = start_ms - (target_ms * warmup_bars)
+                        end_download_ms = end_ms
+                        self.download_data(start_download_ms, end_download_ms, timeframe=tf_key, quiet=True)
                 
         except Exception as e:
-            QMessageBox.critical(self, "오류", f"예기치 않은 오류가 발생했습니다: {str(e)}")
+            if not quiet:
+                QMessageBox.critical(self, "오류", f"예기치 않은 오류가 발생했습니다: {str(e)}")
+            else:
+                print(f"Quiet download error: {e}")
+            return False
+        return True
             
     def populate_ui(self, df):
         # 1. Populate Table
@@ -2004,7 +2083,12 @@ class BinanceDataFetcher(QMainWindow):
 
         # WaveTrend 패널 렌더링
         if ax_wt is not None:
-            for (ch_len, avg_len, wt2_len, ob_level, os_level) in self.wavetrend_settings:
+            for setting in self.wavetrend_settings:
+                if len(setting) == 6:
+                    ch_len, avg_len, wt2_len, ob_level, os_level, cross_count = setting
+                else:
+                    ch_len, avg_len, wt2_len, ob_level, os_level = setting
+                    cross_count = 1
                 wt1, wt2 = self.calculate_wavetrend(plot_df, ch_len, avg_len, wt2_len)
                 ax_wt.plot(x_nums, wt1.values, color='#00e676', linewidth=1.2, label='WT1')
                 ax_wt.plot(x_nums, wt2.values, color='#ff3d00', linewidth=1.2, linestyle='--', label='WT2')
