@@ -1073,13 +1073,18 @@ class BinanceDataFetcher(QMainWindow):
             df_target['mtf_macd'] = macd_line
             df_target['mtf_sig'] = sig_line
             
+            # 완성된 캔들만 사용하기 위해 타임스탬프를 캔들 종료 시점으로 이동 (Lookahead Bias 방지)
+            target_ms = TIMEFRAME_CONFIG[tf_key]['ms']
+            df_target['timestamp_shifted'] = df_target['timestamp'] + target_ms
+            
             df_curr_sorted = df_curr.sort_values('timestamp')
-            df_target_sorted = df_target[['timestamp', 'mtf_macd', 'mtf_sig']].sort_values('timestamp')
+            df_target_sorted = df_target[['timestamp_shifted', 'mtf_macd', 'mtf_sig']].sort_values('timestamp_shifted')
             
             merged = pd.merge_asof(
                 df_curr_sorted,
                 df_target_sorted,
-                on='timestamp',
+                left_on='timestamp',
+                right_on='timestamp_shifted',
                 direction='backward'
             )
             
@@ -1202,7 +1207,9 @@ class BinanceDataFetcher(QMainWindow):
         df_target['mtf_sig'] = sig_line
         df_target['mtf_hist'] = hist
         
-        df_target['timestamp_dt'] = pd.to_datetime(df_target['timestamp'], unit='ms') + pd.Timedelta(hours=9)
+        # 완성된 캔들만 사용하기 위해 타임스탬프를 캔들 종료 시점으로 이동 (Lookahead Bias 방지)
+        target_ms = TIMEFRAME_CONFIG[tf_key]['ms']
+        df_target['timestamp_dt'] = pd.to_datetime(df_target['timestamp'] + target_ms, unit='ms') + pd.Timedelta(hours=9)
         
         temp_df = plot_df.copy().reset_index()
         temp_df_sorted = temp_df.sort_values('timestamp')
