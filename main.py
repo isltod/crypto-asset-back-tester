@@ -633,7 +633,7 @@ class MtfStochRsiDialog(QDialog):
     def __init__(self, parent=None, current_tf='1m'):
         super().__init__(parent)
         self.setWindowTitle("다중 타임프레임 Stochastic RSI 설정")
-        self.resize(320, 260)
+        self.resize(320, 340)
         
         layout = QVBoxLayout(self)
         
@@ -683,6 +683,22 @@ class MtfStochRsiDialog(QDialog):
         d_layout.addWidget(self.d_spin)
         layout.addLayout(d_layout)
         
+        ob_layout = QHBoxLayout()
+        ob_layout.addWidget(QLabel("과매수 레벨:"))
+        self.ob_spin = QSpinBox()
+        self.ob_spin.setRange(1, 100)
+        self.ob_spin.setValue(80)
+        ob_layout.addWidget(self.ob_spin)
+        layout.addLayout(ob_layout)
+        
+        os_layout = QHBoxLayout()
+        os_layout.addWidget(QLabel("과매도 레벨:"))
+        self.os_spin = QSpinBox()
+        self.os_spin.setRange(1, 100)
+        self.os_spin.setValue(20)
+        os_layout.addWidget(self.os_spin)
+        layout.addLayout(os_layout)
+        
         self.ls_checkbox = QCheckBox("LS 라벨링 적용")
         layout.addWidget(self.ls_checkbox)
         
@@ -693,7 +709,8 @@ class MtfStochRsiDialog(QDialog):
     def get_settings(self):
         return (self.tf_combo.currentData(), self.rsi_spin.value(),
                 self.stoch_spin.value(), self.k_spin.value(),
-                self.d_spin.value(), self.ls_checkbox.isChecked())
+                self.d_spin.value(), self.ob_spin.value(),
+                self.os_spin.value(), self.ls_checkbox.isChecked())
 
 
 
@@ -723,7 +740,7 @@ class BinanceDataFetcher(QMainWindow):
         self.wavetrend_settings = []     # [(ch_len, avg_len, ob_level, os_level), ...]
         self.mtf_macd_settings = []      # [(tf_key, fast_len, slow_len, sig_len), ...]
         self.kalman_mtf_macd_settings = [] # [(tf_key, Q, R, fast_len, slow_len, sig_len), ...]
-        self.mtf_stoch_rsi_settings = [] # [(tf_key, rsi_len, stoch_len, k_len, d_len), ...]
+        self.mtf_stoch_rsi_settings = [] # [(tf_key, rsi_len, stoch_len, k_len, d_len, ob_level, os_level), ...]
 
         # 현재 선택된 타임프레임 (기본값: 1분)
         self.current_timeframe = '1m'
@@ -1718,8 +1735,8 @@ class BinanceDataFetcher(QMainWindow):
     def open_mtf_stoch_rsi_dialog(self):
         dialog = MtfStochRsiDialog(self, current_tf=self.current_timeframe)
         if dialog.exec():
-            tf_key, rsi_len, stoch_len, k_len, d_len, use_ls = dialog.get_settings()
-            setting = (tf_key, rsi_len, stoch_len, k_len, d_len)
+            tf_key, rsi_len, stoch_len, k_len, d_len, ob_level, os_level, use_ls = dialog.get_settings()
+            setting = (tf_key, rsi_len, stoch_len, k_len, d_len, ob_level, os_level)
             if setting not in self.mtf_stoch_rsi_settings:
                 self.mtf_stoch_rsi_settings.append(setting)
             
@@ -1750,12 +1767,12 @@ class BinanceDataFetcher(QMainWindow):
                 QApplication.processEvents()
             
             if use_ls:
-                self.apply_mtf_stoch_rsi_ls_labeling(tf_key, rsi_len, stoch_len, k_len, d_len)
+                self.apply_mtf_stoch_rsi_ls_labeling(tf_key, rsi_len, stoch_len, k_len, d_len, ob_level, os_level)
             else:
                 if hasattr(self, 'current_df') and not self.current_df.empty:
                     self.populate_ui(self.current_df)
 
-    def apply_mtf_stoch_rsi_ls_labeling(self, tf_key, rsi_len, stoch_len, k_len, d_len):
+    def apply_mtf_stoch_rsi_ls_labeling(self, tf_key, rsi_len, stoch_len, k_len, d_len, ob_level, os_level):
         import os
         cache_file = TIMEFRAME_CONFIG[self.current_timeframe]['cache']
         target_cache_file = TIMEFRAME_CONFIG[tf_key]['cache']
@@ -1804,8 +1821,8 @@ class BinanceDataFetcher(QMainWindow):
             golden_cross = (prev_k <= prev_d) & (k > d)
             dead_cross = (prev_k >= prev_d) & (k < d)
             
-            long_signal = golden_cross & ((k <= 20) | (prev_k <= 20))
-            short_signal = dead_cross & ((k >= 80) | (prev_k >= 80))
+            long_signal = golden_cross & ((k <= os_level) | (prev_k <= os_level))
+            short_signal = dead_cross & ((k >= ob_level) | (prev_k >= ob_level))
             
             signal_series = pd.Series(0, index=merged.index)
             signal_series.loc[long_signal] = 1
@@ -2388,7 +2405,7 @@ class BinanceDataFetcher(QMainWindow):
 
             # 활성화된 MTF Stoch RSI 설정이 있다면 해당 대상 시간틀 데이터도 자동으로 받아두기
             if not quiet and hasattr(self, 'mtf_stoch_rsi_settings') and self.mtf_stoch_rsi_settings:
-                for (tf_key, rsi_len, stoch_len, k_len, d_len) in self.mtf_stoch_rsi_settings:
+                for (tf_key, rsi_len, stoch_len, k_len, d_len, ob_level, os_level) in self.mtf_stoch_rsi_settings:
                     if tf_key != timeframe:
                         warmup_bars = max(rsi_len, stoch_len, k_len, d_len) * 4
                         target_ms = TIMEFRAME_CONFIG[tf_key]['ms']
@@ -2704,7 +2721,7 @@ class BinanceDataFetcher(QMainWindow):
 
         # MTF Stoch RSI 패널 렌더링
         if ax_stoch_rsi is not None:
-            for (tf_key, rsi_len, stoch_len, k_len, d_len) in self.mtf_stoch_rsi_settings:
+            for (tf_key, rsi_len, stoch_len, k_len, d_len, ob_level, os_level) in self.mtf_stoch_rsi_settings:
                 k_line, d_line = self.get_mtf_stoch_rsi_for_df(plot_df, tf_key, rsi_len, stoch_len, k_len, d_len)
                 if k_line is None or k_line.isna().all():
                     continue
@@ -2712,12 +2729,12 @@ class BinanceDataFetcher(QMainWindow):
                 ax_stoch_rsi.plot(x_nums, d_line.values, color='#ff9800', linewidth=1.2, label=f'D ({tf_key})')
                 
                 # Overbought / Oversold zones
-                ax_stoch_rsi.axhline(y=80, color='#ef5350', linestyle='--', linewidth=0.8, alpha=0.7)
-                ax_stoch_rsi.axhline(y=20, color='#26a69a', linestyle='--', linewidth=0.8, alpha=0.7)
+                ax_stoch_rsi.axhline(y=ob_level, color='#ef5350', linestyle='--', linewidth=0.8, alpha=0.7)
+                ax_stoch_rsi.axhline(y=os_level, color='#26a69a', linestyle='--', linewidth=0.8, alpha=0.7)
                 
                 valid = ~np.isnan(k_line.values)
-                ax_stoch_rsi.fill_between(x_nums, k_line.values, 80, where=valid & (k_line.values >= 80), color='#ef5350', alpha=0.2)
-                ax_stoch_rsi.fill_between(x_nums, k_line.values, 20, where=valid & (k_line.values <= 20), color='#26a69a', alpha=0.2)
+                ax_stoch_rsi.fill_between(x_nums, k_line.values, ob_level, where=valid & (k_line.values >= ob_level), color='#ef5350', alpha=0.2)
+                ax_stoch_rsi.fill_between(x_nums, k_line.values, os_level, where=valid & (k_line.values <= os_level), color='#26a69a', alpha=0.2)
                 
                 ax_stoch_rsi.set_ylim(-5, 105)
                 ax_stoch_rsi.set_ylabel(f'Stoch RSI ({tf_key})', fontsize=8)
