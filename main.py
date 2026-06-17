@@ -714,6 +714,35 @@ class MtfStochRsiDialog(QDialog):
 
 
 
+class BacktestDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("백테스트 설정")
+        self.resize(300, 150)
+        
+        layout = QVBoxLayout(self)
+        
+        lev_layout = QHBoxLayout()
+        self.lev_label = QLabel("레버리지:")
+        self.lev_spinbox = QSpinBox()
+        self.lev_spinbox.setRange(1, 125)
+        self.lev_spinbox.setValue(1)
+        lev_layout.addWidget(self.lev_label)
+        lev_layout.addWidget(self.lev_spinbox)
+        layout.addLayout(lev_layout)
+        
+        self.save_csv_checkbox = QCheckBox("거래 내역 CSV 저장")
+        self.save_csv_checkbox.setChecked(True)
+        layout.addWidget(self.save_csv_checkbox)
+        
+        self.action_btn = QPushButton("백테스트 실행")
+        self.action_btn.clicked.connect(self.accept)
+        layout.addWidget(self.action_btn)
+        
+    def get_settings(self):
+        return self.lev_spinbox.value(), self.save_csv_checkbox.isChecked()
+
+
 import matplotlib
 matplotlib.use('QtAgg')
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas, NavigationToolbar2QT as NavigationToolbar
@@ -2115,6 +2144,12 @@ class BinanceDataFetcher(QMainWindow):
             QMessageBox.warning(self, "백테스트", "백테스트를 수행할 데이터가 없습니다.")
             return
 
+        dialog = BacktestDialog(self)
+        if not dialog.exec():
+            return
+            
+        leverage, save_csv = dialog.get_settings()
+
         import os
         try:
             # 규칙 1: capital 100으로 초기화
@@ -2124,41 +2159,127 @@ class BinanceDataFetcher(QMainWindow):
             balance = 100.0
             pos = 0          # 0: 없음, 1: Long, -1: Short
             entry_price = 0.0
+            entry_time = None
+            balance_before = 100.0
+            entry_fee = 0.0
+            trade_margin = 0.0
+            
+            trade_history = []
+            trade_highest = 0.0
+            trade_lowest = 0.0
 
             total_rows = len(df)
 
             # 규칙 2~6: 봉 단위 가상 거래 시뮬레이션
             for i in range(total_rows):
                 label      = int(df.iloc[i - 1]['ls_label']) if i > 0 else 0
-                # 이게 이렇게 한 시간 단위만 미래 오염이 발생해도 수익이 어마어마한데...
-                # label      = int(df.iloc[i]['ls_label']) if i > 0 else 0
                 open_price = float(df.iloc[i]['open'])
+                current_time = df.iloc[i]['timestamp']
 
                 # 규칙 5-4: 현재 포지션과 다른 label이 나타나면 청산만 수행
                 if pos != 0 and label != pos:
-                    balance *= (1 - fee_rate)          # 청산 수수료
                     if pos == 1:
-                        pnl = (open_price - entry_price) / entry_price
+                        pnl_raw = (open_price - entry_price) / entry_price
+                        max_profit_pct = (trade_highest - entry_price) / entry_price * 100 * leverage
+                        max_loss_pct = (trade_lowest - entry_price) / entry_price * 100 * leverage
                     else:  # pos == -1
-                        pnl = (entry_price - open_price) / entry_price
-                    balance *= (1 + pnl)
+                        pnl_raw = (entry_price - open_price) / entry_price
+                        max_profit_pct = (entry_price - trade_lowest) / entry_price * 100 * leverage
+                        max_loss_pct = (entry_price - trade_highest) / entry_price * 100 * leverage
+                        
+                    pnl_amount = trade_margin * leverage * pnl_raw
+                    nominal_close_size = trade_margin * leverage + pnl_amount
+                    if nominal_close_size < 0: nominal_close_size = 0
+                    exit_fee = nominal_close_size * fee_rate
+                    
+                    balance += pnl_amount
+                    balance -= exit_fee
+                    if balance < 0: balance = 0
+                    
+                    total_fee = entry_fee + exit_fee
+                    pnl_leveraged = pnl_amount / trade_margin if trade_margin > 0 else 0
+                    
+                    trade_history.append({
+                        "롱/숏 포지션": "Long" if pos == 1 else "Short",
+                        "레버리지": leverage,
+                        "진입 시간": entry_time,
+                        "청산 시간": current_time,
+                        "진입 가격": entry_price,
+                        "청산 가격": open_price,
+                        "pnl": pnl_leveraged,
+                        "roe": pnl_leveraged * 100,
+                        "거래 수수료": total_fee,
+                        "거래전 자산": balance_before,
+                        "거래 후 자산": balance,
+                        "최대 손실 (%)": max_loss_pct,
+                        "최대 이익 (%)": max_profit_pct
+                    })
                     pos = 0
 
                 # 규칙 5-2/5-3: 포지션이 없고 label이 있으면 진입
                 if pos == 0 and label != 0:
                     pos = label
                     entry_price = open_price
-                    balance *= (1 - fee_rate)          # 진입 수수료
+                    entry_time = current_time
+                    balance_before = balance
+                    
+                    nominal_size = balance * leverage
+                    entry_fee = nominal_size * fee_rate
+                    balance -= entry_fee
+                    trade_margin = balance
+                    
+                    curr_high = float(df.iloc[i]['high'])
+                    curr_low = float(df.iloc[i]['low'])
+                    trade_highest = curr_high
+                    trade_lowest = curr_low
+                elif pos != 0:
+                    # 포지션 유지중인 경우 현재 봉의 high/low 반영
+                    curr_high = float(df.iloc[i]['high'])
+                    curr_low = float(df.iloc[i]['low'])
+                    if curr_high > trade_highest:
+                        trade_highest = curr_high
+                    if curr_low < trade_lowest:
+                        trade_lowest = curr_low
 
                 # 규칙 5-5: 마지막 봉에 포지션이 남아 있으면 close로 청산
                 if i == total_rows - 1 and pos != 0:
                     close_price = float(df.iloc[i]['close'])
-                    balance *= (1 - fee_rate)          # 청산 수수료
                     if pos == 1:
-                        pnl = (close_price - entry_price) / entry_price
+                        pnl_raw = (close_price - entry_price) / entry_price
+                        max_profit_pct = (trade_highest - entry_price) / entry_price * 100 * leverage
+                        max_loss_pct = (trade_lowest - entry_price) / entry_price * 100 * leverage
                     else:
-                        pnl = (entry_price - close_price) / entry_price
-                    balance *= (1 + pnl)
+                        pnl_raw = (entry_price - close_price) / entry_price
+                        max_profit_pct = (entry_price - trade_lowest) / entry_price * 100 * leverage
+                        max_loss_pct = (entry_price - trade_highest) / entry_price * 100 * leverage
+                        
+                    pnl_amount = trade_margin * leverage * pnl_raw
+                    nominal_close_size = trade_margin * leverage + pnl_amount
+                    if nominal_close_size < 0: nominal_close_size = 0
+                    exit_fee = nominal_close_size * fee_rate
+                    
+                    balance += pnl_amount
+                    balance -= exit_fee
+                    if balance < 0: balance = 0
+                    
+                    total_fee = entry_fee + exit_fee
+                    pnl_leveraged = pnl_amount / trade_margin if trade_margin > 0 else 0
+                    
+                    trade_history.append({
+                        "롱/숏 포지션": "Long" if pos == 1 else "Short",
+                        "레버리지": leverage,
+                        "진입 시간": entry_time,
+                        "청산 시간": current_time,
+                        "진입 가격": entry_price,
+                        "청산 가격": close_price,
+                        "pnl": pnl_leveraged,
+                        "roe": pnl_leveraged * 100,
+                        "거래 수수료": total_fee,
+                        "거래전 자산": balance_before,
+                        "거래 후 자산": balance,
+                        "최대 손실 (%)": max_loss_pct,
+                        "최대 이익 (%)": max_profit_pct
+                    })
                     pos = 0
 
                 # 규칙 6: 매 봉 capital 기록
@@ -2168,17 +2289,6 @@ class BinanceDataFetcher(QMainWindow):
             cache_file = TIMEFRAME_CONFIG[self.current_timeframe]['cache']
             if os.path.exists(cache_file):
                 full_cache = pd.read_csv(cache_file)
-                # 현재 표시된 구간의 데이터만 업데이트 (Timestamp 기준)
-                # timestamp가 datetime 객체이므로 다시 ms로 변환하여 매칭 (또는 index 매칭)
-                # populate_ui에서 변환한 형식을 고려하여 매칭 진행
-                
-                # 원본 캐시 데이터의 타임스탬프와 일치시키기 위해 ms 단위로 변환
-                # (KST 변환 전의 원본 ms 타임스탬프가 필요함. current_df 생성 시의 정보를 활용)
-                
-                # 더 안전한 방법: current_df에 있는 원본 timestamp(ms)를 사용하여 매치
-                # display_df 생성 시 copy() 했으므로, 원본 ms 값이 소실되었을 수 있음.
-                # 다시 확인: download_data에서 display_df 생성 후 timestamp를 datetime으로 변환함.
-                # 따라서 datetime을 다시 ms로 역변환하여 매칭.
                 
                 # KST(UTC+9)이므로 9시간을 빼고 ms로 변환
                 df_to_save = df.copy()
@@ -2186,21 +2296,28 @@ class BinanceDataFetcher(QMainWindow):
                 
                 # full_cache의 해당 timestamp 행들의 capital 업데이트
                 full_cache.set_index('timestamp', inplace=True)
-                # map을 사용하거나 update 사용
                 updates = df_to_save.set_index('timestamp_ms')['capital']
                 full_cache.update(updates.to_frame())
                 full_cache.reset_index(inplace=True)
                 full_cache.to_csv(cache_file, index=False)
+            
+            if save_csv and trade_history:
+                history_df = pd.DataFrame(trade_history)
+                timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                history_file = f"backtest_history_{timestamp_str}.csv"
+                history_df.to_csv(history_file, index=False, encoding='utf-8-sig')
             
             # 4. UI 갱신 (테이블 등)
             self.populate_ui(df)
             
             final_capital = df.iloc[-1]['capital']
             roi = (final_capital - 100.0)
-            QMessageBox.information(self, "백테스트 완료", 
-                                    f"백테스트가 완료되었습니다.\n"
-                                    f"최종 자산: {final_capital:.2f} USDT\n"
-                                    f"수익률: {roi:.2f}%")
+            
+            msg = f"백테스트가 완료되었습니다.\n최종 자산: {final_capital:.2f} USDT\n수익률: {roi:.2f}%"
+            if save_csv and trade_history:
+                msg += f"\n\n거래 내역이 '{history_file}'에 저장되었습니다."
+                
+            QMessageBox.information(self, "백테스트 완료", msg)
             
         except Exception as e:
             QMessageBox.critical(self, "오류", f"백테스트 중 오류 발생: {str(e)}")
