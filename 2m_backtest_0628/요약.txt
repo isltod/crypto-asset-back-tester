@@ -1,0 +1,59 @@
+기간: 2026. 7. 22 ~ 2026. 9. 22.
+레버리지: 1
+
+단순이동평균: 200, 오프셋 0
+	1분: -97.2% backtest_history_20260628_162346.csv
+	3분: -63.46 backtest_history_20260628_170246.csv
+	5분: -43.79 backtest_history_20260628_171732.csv
+	15분: -28.55 backtest_history_20260628_173325.csv
+	30분: -21.43 backtest_history_20260628_174237.csv
+	60분: -6.96 backtest_history_20260628_174910.csv
+3개의 슈퍼트랜드
+	1분: -99.94 backtest_history_20260628_162934.csv
+	3분: -91.78 backtest_history_20260628_170445.csv
+	5분: -78.74 backtest_history_20260628_171907.csv
+	15분: -44.80 backtest_history_20260628_173420.csv
+	30분: -31.36 backtest_history_20260628_174331.csv
+	60분: -19.77 backtest_history_20260628_174941.csv
+Hull Suite:
+	1분: -99.23 backtest_history_20260628_164056.csv
+	3분: -80.53 backtest_history_20260628_170815.csv
+	5분: -70.88 backtest_history_20260628_172032.csv
+	15분: -25.61 backtest_history_20260628_173508.csv
+	30분: -21.24 backtest_history_20260628_174415.csv
+	60분: -19.58 backtest_history_20260628_175027.csv
+Squeez Momentum:
+	1분: -99.15 backtest_history_20260628_165022.csv
+	3분: -80.90 backtest_history_20260628_171107.csv
+	5분: -66.96 backtest_history_20260628_172201.csv
+	15분: -24.72 backtest_history_20260628_173612.csv
+	30분: -18.09 backtest_history_20260628_174626.csv
+	60분: -10.98 backtest_history_20260628_175106.csv
+Wave Trend:
+	1분: -26.71 backtest_history_20260628_165646.csv
+	3분: -15.13 backtest_history_20260628_171512.csv
+	5분: -0.01 backtest_history_20260628_172413.csv
+	15분: -10.3 backtest_history_20260628_173706.csv
+	30분: -11.34 backtest_history_20260628_174711.csv
+	60분: 7.87 backtest_history_20260628_175143.csv
+MTF MACD:
+	1분: -99.95 backtest_history_20260628_175641.csv
+	3분: -92.62 backtest_history_20260628_184428.csv
+	5분: -81.40 backtest_history_20260628_205334.csv
+	15분: -46.02 backtest_history_20260628_211112.csv
+	30분: -15.20 backtest_history_20260628_232449.csv
+	60분: -26.81 backtest_history_20260628_234448.csv
+Kalman:
+	1분: -98.71 backtest_history_20260628_180240.csv
+	3분: -73.72 backtest_history_20260628_190226.csv
+	5분: -52.91 backtest_history_20260628_205932.csv
+	15분: -0.59 backtest_history_20260628_231547.csv
+	30분: -23.38 backtest_history_20260628_233114.csv
+	60분: -9.79 backtest_history_20260628_235052.csv
+Stochasitc RSI:
+	1분: -99.34 backtest_history_20260628_183534.csv
+	3분: -81.70 backtest_history_20260628_190931.csv
+	5분: -66.44 backtest_history_20260628_210417.csv
+	15분: -43.55 backtest_history_20260628_232008.csv
+	30분: -22.75 backtest_history_20260628_233604.csv
+	60분: -3.49 backtest_history_20260628_235541.csv
