@@ -2108,12 +2108,20 @@ class BinanceDataFetcher(QMainWindow):
                 
                 preds_all = []
                 batch_size = 256
+                total_batches = (len(X_tensor) + batch_size - 1) // batch_size
+                self.progress_bar.setRange(0, total_batches)
+                
                 with torch.no_grad():
-                    for offset in range(0, len(X_tensor), batch_size):
+                    for i, offset in enumerate(range(0, len(X_tensor), batch_size)):
+                        self.progress_bar.setValue(i)
+                        QApplication.processEvents()
                         batch_x = X_tensor[offset : offset + batch_size]
                         outputs = model(batch_x)
                         _, predicted = outputs.max(1)
                         preds_all.extend(predicted.cpu().numpy())
+                        
+                self.progress_bar.setValue(total_batches)
+                QApplication.processEvents()
                         
                 # 예측 라벨 맵핑 (0, 1, 2 -> -1, 0, 1)
                 preds_mapped = np.array(preds_all) - 1
@@ -2138,6 +2146,8 @@ class BinanceDataFetcher(QMainWindow):
         finally:
             self.setWindowTitle("Binance Futures BTC OHLCV Downloader")
             self.statusBar.clearMessage()
+            if hasattr(self, 'progress_bar'):
+                self.progress_bar.setVisible(False)
 
     def run_backtest(self):
         if not hasattr(self, 'current_df') or self.current_df.empty:
@@ -2169,9 +2179,18 @@ class BinanceDataFetcher(QMainWindow):
             trade_lowest = 0.0
 
             total_rows = len(df)
+            
+            self.progress_bar.setRange(0, total_rows)
+            self.progress_bar.setValue(0)
+            self.progress_bar.setVisible(True)
+            self.statusBar.showMessage("백테스트 실행 중...")
 
             # 규칙 2~6: 봉 단위 가상 거래 시뮬레이션
             for i in range(total_rows):
+                if i % 1000 == 0:
+                    self.progress_bar.setValue(i)
+                    QApplication.processEvents()
+                    
                 label      = int(df.iloc[i - 1]['ls_label']) if i > 0 else 0
                 open_price = float(df.iloc[i]['open'])
                 current_time = df.iloc[i]['timestamp']
@@ -2321,6 +2340,10 @@ class BinanceDataFetcher(QMainWindow):
             
         except Exception as e:
             QMessageBox.critical(self, "오류", f"백테스트 중 오류 발생: {str(e)}")
+        finally:
+            if hasattr(self, 'progress_bar'):
+                self.progress_bar.setVisible(False)
+                self.statusBar.clearMessage()
 
     def open_download_dialog(self):
         start_str = None
@@ -2445,9 +2468,17 @@ class BinanceDataFetcher(QMainWindow):
                         f_end = missing_ts[i-1] + tf_ms
                         fetch_intervals.append((f_start, f_end))
                         s_idx = i
+            if fetch_intervals:
+                self.progress_bar.setRange(0, len(fetch_intervals))
+                self.progress_bar.setValue(0)
+                self.progress_bar.setVisible(True)
+                self.statusBar.showMessage("데이터 다운로드 중...")
             
             new_ohlcv = []
-            for f_start, f_end in fetch_intervals:
+            for idx, (f_start, f_end) in enumerate(fetch_intervals):
+                self.progress_bar.setValue(idx)
+                QApplication.processEvents()
+                
                 current_start = f_start
                 while current_start < f_end:
                     try:
@@ -2472,6 +2503,10 @@ class BinanceDataFetcher(QMainWindow):
                         else:
                             print(f"Quiet download API error: {e}")
                         break
+            
+            if fetch_intervals:
+                self.progress_bar.setVisible(False)
+                self.statusBar.clearMessage()
             
             # 새로 받은 데이터가 있으면 캐시에 병합
             if new_ohlcv:
